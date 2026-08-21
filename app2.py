@@ -301,10 +301,15 @@ st.markdown(
 )
 
 CMJ_COLUMNS = [
-    "Date", "Match", "Player Name", "CMJ 1", "CMJ 2", "CMJ 3", "Average",
+    "Date", "Match", "Player Name", "CMJ 1", "CMJ 2", "Average",
     "Rolling Baseline", "Readiness Score", "Consecutive Days", "Difference",
-    "Z-Score", "% Change", "Rolling",
+    "Z-Score", "% Change", "Rolling SD",
 ]
+
+# Only these are truly required on upload — Average through Rolling SD are
+# derived automatically (see derive_cmj_metrics) when the file doesn't
+# already have them.
+CMJ_REQUIRED_COLUMNS = ["Date", "Match", "Player Name", "CMJ 1", "CMJ 2"]
 
 GPS_COLUMNS = [
     "Player Name", "Period Name", "Period Number", "Max Acceleration", "Max Deceleration",
@@ -442,6 +447,80 @@ def typical_baseline(player_name, current_value, salt):
     return history.mean()
 
 
+CMJ_DERIVED_COLUMNS = [
+    "Rolling Baseline", "Rolling SD", "Difference", "Z-Score",
+    "% Change", "Readiness Score", "Consecutive Days",
+]
+
+
+def derive_cmj_metrics(df, baseline_test_count=30, baseline_window_days=30):
+    """Fills in Average / Rolling Baseline / Rolling SD / Difference /
+    Z-Score / % Change / Readiness Score / Consecutive Days from raw
+    Date + Player Name + CMJ 1 + CMJ 2, replicating the club's original
+    CMJ tracking-sheet formulas:
+      - Rolling Baseline / Rolling SD: expanding per-player mean / population
+        stdev of Average until a player has 30 tests, then a trailing
+        30-calendar-day window of Average.
+      - Z-Score: (Average - Rolling Baseline) / Rolling SD.
+      - Readiness Score: 3 if Z >= 1, 1 if Z <= -1, else 2.
+      - Consecutive Days: current streak of Readiness Score == 1 (low)
+        days for that player.
+    Leaves the file untouched if it already has all of these columns.
+    """
+    if "Player Name" not in df.columns or "Date" not in df.columns:
+        return df
+    if all(c in df.columns for c in CMJ_DERIVED_COLUMNS):
+        return df
+
+    df = df.copy()
+    if "Average" not in df.columns or df["Average"].isna().all():
+        if "CMJ 1" in df.columns and "CMJ 2" in df.columns:
+            df["Average"] = df[["CMJ 1", "CMJ 2"]].mean(axis=1)
+    if "Average" not in df.columns:
+        return df
+
+    df = df.sort_values(["Player Name", "Date"], kind="stable").reset_index(drop=True)
+
+    baseline = np.full(len(df), np.nan)
+    rolling_sd = np.full(len(df), np.nan)
+    for _, idx in df.groupby("Player Name").groups.items():
+        idx = list(idx)
+        avgs = df.loc[idx, "Average"].to_numpy(dtype=float)
+        dates = df.loc[idx, "Date"].to_numpy()
+        for pos, row_idx in enumerate(idx):
+            if pos + 1 < baseline_test_count:
+                window = avgs[: pos + 1]
+            else:
+                cutoff = dates[pos] - np.timedelta64(baseline_window_days, "D")
+                window = avgs[: pos + 1][dates[: pos + 1] >= cutoff]
+            window = window[~np.isnan(window)]
+            if len(window):
+                baseline[row_idx] = window.mean()
+                rolling_sd[row_idx] = window.std(ddof=0)
+
+    df["Rolling Baseline"] = baseline
+    df["Rolling SD"] = rolling_sd
+    df["Difference"] = df["Average"] - df["Rolling Baseline"]
+    df["Z-Score"] = np.where(df["Rolling SD"] > 0, df["Difference"] / df["Rolling SD"], np.nan)
+    df["% Change"] = np.where(
+        df["Rolling Baseline"].fillna(0) != 0, df["Difference"] / df["Rolling Baseline"], 0.0
+    )
+    df["Readiness Score"] = np.select(
+        [df["Z-Score"] >= 1, df["Z-Score"] <= -1], [3, 1], default=2
+    ).astype(float)
+    df.loc[df["Z-Score"].isna(), "Readiness Score"] = np.nan
+
+    streaks = np.zeros(len(df), dtype=int)
+    for _, idx in df.groupby("Player Name").groups.items():
+        running = 0
+        for row_idx in idx:
+            running = running + 1 if df.at[row_idx, "Readiness Score"] == 1 else 0
+            streaks[row_idx] = running
+    df["Consecutive Days"] = streaks
+
+    return df
+
+
 def flag_readiness(z):
     """Simple 3-tier flag comparing today's jump to the player's rolling
     season average (via Z-Score): Red = notably below, Yellow = below,
@@ -493,12 +572,13 @@ with tab_cmj:
     left, right = st.columns([1, 2.5])
 
     with left:
-        cmj_df = data_source_picker("cmj", CMJ_LIBRARY, CMJ_COLUMNS, "CMJ Readiness")
+        cmj_df = data_source_picker("cmj", CMJ_LIBRARY, CMJ_REQUIRED_COLUMNS, "CMJ Readiness")
 
     if cmj_df is not None and not cmj_df.empty:
         cmj_df = cmj_df.copy()
         if "Date" in cmj_df.columns:
             cmj_df["Date"] = pd.to_datetime(cmj_df["Date"], errors="coerce")
+        cmj_df = derive_cmj_metrics(cmj_df)
         if "Z-Score" in cmj_df.columns:
             cmj_df["Flag"] = cmj_df["Z-Score"].apply(flag_readiness)
 

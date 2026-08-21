@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-streamlit run app.py
+streamlit run app2.py
 ```
 
 Then open the URL Streamlit prints (usually `http://localhost:8501`).
@@ -27,9 +27,8 @@ Then open the URL Streamlit prints (usually `http://localhost:8501`).
 
 ```
 soccer_dashboard/
-├── app.py                     # main dashboard app
+├── app2.py                    # main dashboard app
 ├── requirements.txt
-├── generate_sample_data.py    # regenerate/tweak the sample libraries
 └── sample_data/
     ├── CMJ_Preseason_Week1-2.xlsx
     ├── CMJ_InSeason_Week1-2.xlsx
@@ -42,8 +41,15 @@ soccer_dashboard/
 ## Uploading your own data
 
 ### CMJ Readiness tab expects these columns:
-`Date, Match, Player Name, CMJ 1, CMJ 2, CMJ 3, Average, Rolling Baseline,
-Readiness Score, Consecutive Days, Difference, Z-Score, % Change, Rolling`
+`Date, Match, Player Name, CMJ 1, CMJ 2, Average, Rolling Baseline,
+Readiness Score, Consecutive Days, Difference, Z-Score, % Change, Rolling SD`
+
+Only `Date, Match, Player Name, CMJ 1, CMJ 2` are actually required — if the
+rest aren't in the file, the app derives them automatically
+(`derive_cmj_metrics()` in `app2.py`), replicating the club's original
+tracking-sheet formulas: an expanding per-player baseline/SD until a player
+has 30 tests, then a trailing 30-day window; Z-Score, % Change, and a
+Readiness Score/Consecutive-Days streak built from that baseline.
 
 ### GPS / Catapult tab expects these columns:
 `Player Name, Period Name, Period Number, Max Acceleration, Max Deceleration,
@@ -62,12 +68,11 @@ and warn you which charts may not render.
 
 ## Adding more sample library entries
 
-Edit `generate_sample_data.py` and re-run it, or just drop additional
-matching `.xlsx` files into `sample_data/` and add an entry to the
-`CMJ_LIBRARY` / `GPS_LIBRARY` dictionaries at the top of `app.py`.
+Drop additional matching `.xlsx` files into `sample_data/` and add an entry
+to the `CMJ_LIBRARY` / `GPS_LIBRARY` dictionaries at the top of `app2.py`.
 
 ## Customizing thresholds
 
 The CMJ readiness flag thresholds (Low / Below Average / Normal / High) are
-set in the `flag_readiness()` function in `app.py` — currently based on
+set in the `flag_readiness()` function in `app2.py` — currently based on
 Z-Score cutoffs of -1.5 / -0.5 / +0.5. Adjust to match your club's protocol.
