@@ -259,13 +259,17 @@ with tab_cmj:
         filtered = cmj_df.copy()
         if selected_players:
             filtered = filtered[filtered["Player Name"].isin(selected_players)]
+        date_ranged = cmj_df.copy()
         if date_range and isinstance(date_range, tuple) and len(date_range) == 2:
             start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
             filtered = filtered[(filtered["Date"] >= start) & (filtered["Date"] <= end)]
+            date_ranged = date_ranged[(date_ranged["Date"] >= start) & (date_ranged["Date"] <= end)]
 
         with right:
-            latest_date = cmj_df["Date"].max() if "Date" in cmj_df.columns else None
-            today_df = cmj_df[cmj_df["Date"] == latest_date] if latest_date is not None else cmj_df
+            # "Today" = the latest date within the selected date range, not
+            # necessarily the latest date in the whole file.
+            latest_date = date_ranged["Date"].max() if "Date" in date_ranged.columns and not date_ranged.empty else None
+            today_df = cmj_df[cmj_df["Date"] == latest_date] if latest_date is not None else cmj_df.iloc[0:0]
 
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Team Avg Readiness (latest)", f"{today_df['Readiness Score'].mean():.0f}"
