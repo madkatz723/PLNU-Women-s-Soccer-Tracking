@@ -57,7 +57,7 @@ def st_plotly_light(fig, **kwargs):
     and disables Streamlit's automatic theme-sync (which would otherwise
     re-skin the chart dark if the active app theme is dark)."""
     force_light_chart(fig)
-    st.plotly_chart(fig, theme=None, use_container_width=True, **kwargs)
+    st.plotly_chart(fig, theme=None, width="stretch", **kwargs)
 
 st.markdown(
     f"""
@@ -550,7 +550,7 @@ FLAG_COLORS = {
 header_logo_col, header_text_col = st.columns([1, 4])
 with header_logo_col:
     if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, use_container_width=True)
+        st.image(LOGO_PATH, width="stretch")
 with header_text_col:
     st.markdown(
         """
@@ -654,7 +654,7 @@ with tab_cmj:
             st.info("No data available for the latest test day with the current filters.")
 
         with st.expander("View raw data table"):
-            st.dataframe(filtered.sort_values("Date", ascending=False), use_container_width=True)
+            st.dataframe(filtered.sort_values("Date", ascending=False), width="stretch")
     else:
         st.info("Choose a library dataset or upload a file on the left to get started.")
 
@@ -895,7 +895,7 @@ with tab_gps:
                     chart_card(plain_bar_chart(team, "Meterage Per Minute", "Distance/min", "Meterage Per Minute"))
 
         with st.expander("View raw data table"):
-            st.dataframe(filtered2, use_container_width=True)
+            st.dataframe(filtered2, width="stretch")
     else:
         st.info("Choose a library dataset or upload a file on the left to get started.")
 

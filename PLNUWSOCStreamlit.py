@@ -298,7 +298,7 @@ with tab_cmj:
                     fig.add_hline(y=-1.5, line_dash="dash", line_color="red", annotation_text="Low threshold")
                     fig.add_hline(y=0, line_dash="dot", line_color="gray")
                 fig.update_layout(height=420, legend_title="Player")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             else:
                 st.info("Select at least one player to see trends.")
 
@@ -313,7 +313,7 @@ with tab_cmj:
                     marker_color=[FLAG_COLORS[f] for f in flag_counts.index],
                 ))
                 fig2.update_layout(height=420, xaxis_title="Players", yaxis_title="")
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, width="stretch")
 
         st.markdown("##### Team Readiness Heatmap (Z-Score by Player x Date)")
         if not cmj_df.empty and "Date" in cmj_df.columns:
@@ -325,10 +325,10 @@ with tab_cmj:
             )
             fig3.update_xaxes(tickformat="%b %d")
             fig3.update_layout(height=max(300, 22 * len(pivot)))
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width="stretch")
 
         with st.expander("View raw data table"):
-            st.dataframe(filtered.sort_values("Date", ascending=False), use_container_width=True)
+            st.dataframe(filtered.sort_values("Date", ascending=False), width="stretch")
     else:
         st.info("Choose a library dataset or upload a file on the left to get started.")
 
@@ -381,7 +381,7 @@ with tab_gps:
                 fig4 = go.Figure()
                 fig4.add_trace(go.Bar(y=agg["Player Name"], x=agg["Distance"], name="Distance (m)", orientation="h"))
                 fig4.update_layout(height=max(350, 24 * len(agg)), xaxis_title="Distance (m)", barmode="group")
-                st.plotly_chart(fig4, use_container_width=True)
+                st.plotly_chart(fig4, width="stretch")
 
         with c2:
             st.markdown("##### Sprint & High-Speed Distance by Player")
@@ -393,7 +393,7 @@ with tab_gps:
                 fig5.add_trace(go.Bar(y=agg2["Player Name"], x=agg2["Sprint Distance"], name="Sprint Distance (m)", orientation="h"))
                 fig5.add_trace(go.Bar(y=agg2["Player Name"], x=agg2["High Speed Distance"], name="High Speed Distance (m)", orientation="h"))
                 fig5.update_layout(height=max(350, 24 * len(agg2)), barmode="group", xaxis_title="Meters")
-                st.plotly_chart(fig5, use_container_width=True)
+                st.plotly_chart(fig5, width="stretch")
 
         c3, c4 = st.columns(2)
         with c3:
@@ -405,7 +405,7 @@ with tab_gps:
                     hover_data=["Period Name"] if "Period Name" in filtered2.columns else None,
                 )
                 fig6.update_layout(height=380)
-                st.plotly_chart(fig6, use_container_width=True)
+                st.plotly_chart(fig6, width="stretch")
 
         with c4:
             st.markdown("##### Acceleration / Deceleration Efforts")
@@ -417,7 +417,7 @@ with tab_gps:
                 fig7.add_trace(go.Bar(y=agg3["Player Name"], x=agg3["Acceleration Efforts"], name="Accel Efforts", orientation="h"))
                 fig7.add_trace(go.Bar(y=agg3["Player Name"], x=agg3["Deceleration Efforts"], name="Decel Efforts", orientation="h"))
                 fig7.update_layout(height=380, barmode="group", xaxis_title="Efforts")
-                st.plotly_chart(fig7, use_container_width=True)
+                st.plotly_chart(fig7, width="stretch")
 
         st.markdown("##### Heart Rate Band Distribution (selected players)")
         hr_band_cols = [f"Heart Rate Band {i} Duration" for i in range(1, 7)]
@@ -429,10 +429,10 @@ with tab_gps:
                 labels={"Seconds": "Duration (sec)"},
             )
             fig8.update_layout(height=400, xaxis_tickangle=-40)
-            st.plotly_chart(fig8, use_container_width=True)
+            st.plotly_chart(fig8, width="stretch")
 
         with st.expander("View raw data table"):
-            st.dataframe(filtered2, use_container_width=True)
+            st.dataframe(filtered2, width="stretch")
     else:
         st.info("Choose a library dataset or upload a file on the left to get started.")
 
