@@ -327,8 +327,7 @@ GPS_COLUMNS = [
 ]
 
 CMJ_LIBRARY = {
-    "Aug 21 \u2014 Team Test": "WSOC_CMJ_8_21_2026.xlsx",
-    "Aug 22 \u2014 Team Test": "WSOC_CMJ_8_22_2026.xlsx",
+    "Season": "WSOC_CMJ_Season.xlsx",
 }
 
 GPS_LIBRARY = {
