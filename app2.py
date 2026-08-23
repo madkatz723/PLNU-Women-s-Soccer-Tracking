@@ -330,12 +330,14 @@ CMJ_LIBRARY = {
     "Preseason \u2014 Week 1-2": "CMJ_Preseason_Week1-2.xlsx",
     "In-Season \u2014 Week 1-2": "CMJ_InSeason_Week1-2.xlsx",
     "This Week": "CMJ_ThisWeek.xlsx",
+    "Aug 22 \u2014 Team Test": "WSOC_CMJ_8_22_2026.xlsx",
 }
 
 GPS_LIBRARY = {
     "Training \u2014 Aug 18": "GPS_Training_Aug18.xlsx",
     "Match \u2014 vs Rivals FC": "GPS_Match_vs_Rivals.xlsx",
     "Training \u2014 Recovery Day": "GPS_Training_Recovery.xlsx",
+    "Match \u2014 Aug 22": "ctr-report_8_22_2026.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -344,6 +346,7 @@ GPS_SESSION_LABELS = {
     "Training \u2014 Aug 18": "Tuesday, August 18 2026",
     "Match \u2014 vs Rivals FC": "Saturday, August 15 2026",
     "Training \u2014 Recovery Day": "Monday, August 17 2026",
+    "Match \u2014 Aug 22": "Saturday, August 22 2026",
 }
 
 
@@ -353,7 +356,11 @@ GPS_SESSION_LABELS = {
 
 @st.cache_data
 def load_excel(path_or_buffer, expected_columns=None):
-    df = pd.read_excel(path_or_buffer)
+    name = getattr(path_or_buffer, "name", path_or_buffer)
+    if str(name).lower().endswith(".csv"):
+        df = pd.read_csv(path_or_buffer)
+    else:
+        df = pd.read_excel(path_or_buffer)
     if expected_columns is not None:
         missing = [c for c in expected_columns if c not in df.columns]
         if missing:
