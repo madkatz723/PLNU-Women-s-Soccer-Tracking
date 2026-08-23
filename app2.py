@@ -327,25 +327,19 @@ GPS_COLUMNS = [
 ]
 
 CMJ_LIBRARY = {
-    "Preseason \u2014 Week 1-2": "CMJ_Preseason_Week1-2.xlsx",
-    "In-Season \u2014 Week 1-2": "CMJ_InSeason_Week1-2.xlsx",
-    "This Week": "CMJ_ThisWeek.xlsx",
+    "Aug 21 \u2014 Team Test": "WSOC_CMJ_8_21_2026.xlsx",
     "Aug 22 \u2014 Team Test": "WSOC_CMJ_8_22_2026.xlsx",
 }
 
 GPS_LIBRARY = {
-    "Training \u2014 Aug 18": "GPS_Training_Aug18.xlsx",
-    "Match \u2014 vs Rivals FC": "GPS_Match_vs_Rivals.xlsx",
-    "Training \u2014 Recovery Day": "GPS_Training_Recovery.xlsx",
+    "Practice \u2014 Aug 21": "ctr-report-8_21_2026-practice.csv",
     "Match \u2014 Aug 22": "ctr-report_8_22_2026.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
 # club's existing daily-report style. Falls back to the uploaded filename.
 GPS_SESSION_LABELS = {
-    "Training \u2014 Aug 18": "Tuesday, August 18 2026",
-    "Match \u2014 vs Rivals FC": "Saturday, August 15 2026",
-    "Training \u2014 Recovery Day": "Monday, August 17 2026",
+    "Practice \u2014 Aug 21": "Friday, August 21 2026",
     "Match \u2014 Aug 22": "Saturday, August 22 2026",
 }
 
