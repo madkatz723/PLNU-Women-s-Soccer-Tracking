@@ -1,16 +1,20 @@
 """
 Women's Soccer Sport Science Dashboard
 ----------------------------------------
-Two independent tabs:
+Three independent tabs:
   1. CMJ Readiness   - daily pre-practice countermovement jump testing
   2. GPS / Catapult   - session load & movement data
+  3. Testing Data     - PDF testing reports, filterable by date
 
-Each tab has its own sample-data library (dropdown) AND its own file
-uploader, completely independent of the other tab.
+The first two tabs each have their own sample-data library (dropdown) AND
+their own file uploader, completely independent of the other tab. The
+third reads PDF reports straight off disk (see TESTING_PDF_DIR).
 """
 
 import os
+import re
 import hashlib
+from datetime import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -24,6 +28,7 @@ st.set_page_config(
 )
 
 SAMPLE_DIR = os.path.join(os.path.dirname(__file__), "sample_data")
+TESTING_PDF_DIR = os.path.join(os.path.dirname(__file__), "WSOC_Testing_PDFs")
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "pl_soccer_logo.png")
 
 # ---------------------------------------------------------------------------
@@ -411,6 +416,90 @@ def data_source_picker(tab_key, library_dict, expected_columns, label):
     return df
 
 
+# ---------------------------------------------------------------------------
+# Testing-report PDFs (Tab 3)
+# ---------------------------------------------------------------------------
+
+# A date embedded in a filename, e.g. the "8-25-2026" in
+# "Womens Soccer CMJ_8-25-2026.pdf". Separators may be '-', '_' or '.'
+# so a rename to the underscore style used by the GPS exports still parses.
+# The lookarounds keep it from matching a fragment of a longer number run.
+_DATE_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,4}[-_.]\d{1,2}[-_.]\d{2,4})(?!\d)")
+
+
+def parse_pdf_date(filename):
+    """Extracts the testing date from a PDF filename, or None if absent.
+
+    Accepts the club's M-D-YYYY convention plus ISO (YYYY-M-D) and a
+    2-digit year. The format is chosen from where the 4-digit year sits
+    rather than by trying formats in order, because strptime's %Y will
+    happily read "26" as year 0026 and silently mis-date the file.
+    """
+    match = _DATE_TOKEN_RE.search(os.path.basename(filename))
+    if not match:
+        return None
+    token = re.sub(r"[_.]", "-", match.group(1))
+    parts = token.split("-")
+    if len(parts[0]) == 4:
+        fmt = "%Y-%m-%d"
+    elif len(parts[2]) == 4:
+        fmt = "%m-%d-%Y"
+    else:
+        fmt = "%m-%d-%y"
+    try:
+        return datetime.strptime(token, fmt).date()
+    except ValueError:
+        return None
+
+
+def pdf_display_title(filename):
+    """Filename minus its date token and extension, tidied for display."""
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    cleaned = re.sub(r"[_\-\s]+", " ", _DATE_TOKEN_RE.sub("", stem)).strip(" -_")
+    return cleaned or stem
+
+
+def scan_testing_pdfs(directory):
+    """Lists testing PDFs as dicts (filename/path/date/title), newest first.
+
+    Deliberately uncached: staff drop new reports into the folder and
+    expect a browser refresh to pick them up, so a cache here would just
+    hide new files. The listing is a cheap stat of one small directory.
+    Undated files sort last but stay visible rather than being dropped.
+    """
+    if not os.path.isdir(directory):
+        return []
+    docs = [
+        {
+            "filename": name,
+            "path": os.path.join(directory, name),
+            "date": parse_pdf_date(name),
+            "title": pdf_display_title(name),
+        }
+        for name in os.listdir(directory)
+        if name.lower().endswith(".pdf")
+    ]
+    dated = sorted(
+        (d for d in docs if d["date"]), key=lambda d: d["date"], reverse=True
+    )
+    undated = sorted((d for d in docs if not d["date"]), key=lambda d: d["filename"])
+    return dated + undated
+
+
+def pdf_option_label(doc):
+    """Selectbox label: '<date> — <title>', or 'Undated — <file>'."""
+    when = doc["date"].strftime("%b %d, %Y") if doc["date"] else "Undated"
+    return f"{when} — {doc['title']}"
+
+
+@st.cache_data
+def read_pdf_bytes(path, mtime):
+    """Raw PDF bytes for the download button. `mtime` is part of the cache
+    key so replacing a report in place invalidates the cached copy."""
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 def _stable_seed(name, salt=0):
     """Deterministic per-player seed (Python's built-in hash() is randomized
     per process, so we use md5 to keep this stable across reruns/sessions)."""
@@ -571,7 +660,11 @@ with header_text_col:
     )
 st.markdown("<div class='plnu-stripe'></div>", unsafe_allow_html=True)
 
-tab_cmj, tab_gps = st.tabs(["\U0001F4CA CMJ Readiness", "\U0001F6F0\uFE0F GPS / Catapult"])
+tab_cmj, tab_gps, tab_testing = st.tabs([
+    "\U0001F4CA CMJ Readiness",
+    "\U0001F6F0\uFE0F GPS / Catapult",
+    "\U0001F4C4 Testing Data",
+])
 
 # ===========================================================================
 # TAB 1: CMJ READINESS
@@ -907,8 +1000,102 @@ with tab_gps:
     else:
         st.info("Choose a library dataset or upload a file on the left to get started.")
 
+
+# ===========================================================================
+# TAB 3: TESTING DATA (PDF reports)
+# ===========================================================================
+with tab_testing:
+    testing_docs = scan_testing_pdfs(TESTING_PDF_DIR)
+
+    if not testing_docs:
+        st.info(
+            f"No PDF reports found. Drop testing reports into **{TESTING_PDF_DIR}** "
+            "and refresh — include the date in the filename "
+            "(e.g. `Womens Soccer CMJ_8-25-2026.pdf`) so they can be filtered by date."
+        )
+    else:
+        left3, right3 = st.columns([1, 2.5])
+        dated_docs = [d for d in testing_docs if d["date"]]
+
+        with left3:
+            st.markdown("#### Filters")
+            testing_range = None
+            if dated_docs:
+                min_pdf_d = min(d["date"] for d in dated_docs)
+                max_pdf_d = max(d["date"] for d in dated_docs)
+                testing_range = st.date_input(
+                    "Date range",
+                    value=(min_pdf_d, max_pdf_d),
+                    min_value=min_pdf_d,
+                    max_value=max_pdf_d,
+                    key="testing_dates",
+                )
+            else:
+                st.caption("No dates found in the report filenames.")
+
+        # While the user is mid-edit st.date_input returns a 1-tuple, so only
+        # filter once both ends are set (same guard as the CMJ tab).
+        visible_docs = testing_docs
+        if testing_range and isinstance(testing_range, tuple) and len(testing_range) == 2:
+            start_d, end_d = testing_range
+            visible_docs = [
+                d for d in testing_docs if d["date"] and start_d <= d["date"] <= end_d
+            ]
+
+        with left3:
+            if visible_docs:
+                selected_label = st.selectbox(
+                    "Report",
+                    [pdf_option_label(d) for d in visible_docs],
+                    key="testing_report",
+                )
+                selected_doc = next(
+                    d for d in visible_docs if pdf_option_label(d) == selected_label
+                )
+            else:
+                selected_doc = None
+
+        with right3:
+            k1, k2 = st.columns(2)
+            k1.metric("Reports in range", len(visible_docs))
+            latest_in_range = max(
+                (d["date"] for d in visible_docs if d["date"]), default=None
+            )
+            k2.metric(
+                "Most recent",
+                latest_in_range.strftime("%b %d, %Y") if latest_in_range else "—",
+            )
+            if selected_doc:
+                st.caption(f"Viewing: **{selected_doc['filename']}**")
+
+        st.markdown("---")
+
+        if selected_doc is None:
+            st.info("No reports fall in the selected date range. Widen the range on the left.")
+        else:
+            st.markdown(
+                f"<div class='section-label'>{selected_doc['title']}"
+                + (
+                    f" &mdash; {selected_doc['date'].strftime('%A, %B %d %Y')}"
+                    if selected_doc["date"]
+                    else ""
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+            st.pdf(selected_doc["path"], height=900)
+            st.download_button(
+                "Download this report",
+                data=read_pdf_bytes(
+                    selected_doc["path"], os.path.getmtime(selected_doc["path"])
+                ),
+                file_name=selected_doc["filename"],
+                mime="application/pdf",
+            )
+
 st.markdown("---")
 st.caption(
     "Built for coaching staff and player-facing use. Library datasets are synthetic sample data. "
-    "Upload your own CMJ or Catapult export to replace them in either tab \u2014 the two tabs are fully independent."
+    "Upload your own CMJ or Catapult export to replace them in either tab \u2014 the two data tabs are "
+    "fully independent. Testing Data reads PDF reports from the WSOC_Testing_PDFs folder."
 )

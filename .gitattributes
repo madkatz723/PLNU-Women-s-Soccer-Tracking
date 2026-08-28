@@ -1,0 +1,13 @@
+# Binary assets — never apply line-ending (CRLF/LF) conversion to these.
+#
+# This matters for PDFs in particular: git guesses binary-vs-text by looking
+# for a NUL byte in the first 8000 bytes, and a mostly-text PDF can have none,
+# so git guesses "text". With core.autocrlf=true it then rewrites LF to CRLF
+# on checkout, shifting every byte offset in the xref table and breaking the
+# stream lengths — i.e. a silently corrupted, unopenable report.
+*.pdf  binary
+*.xlsx binary
+*.xls  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
