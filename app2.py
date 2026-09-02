@@ -344,6 +344,7 @@ GPS_LIBRARY = {
     "Practice \u2014 Aug 28": "ctr-report-8_28_2026-practice.csv",
     "Match \u2014 Aug 29 (vs Metro State)": "ctr-report-8_29_2026-MetroState.csv",
     "Practice \u2014 Aug 31": "ctr-report-8_31_2026-practice.csv",
+    "Practice \u2014 Sep 1": "ctr-report-9_1_2026-practice.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -357,6 +358,7 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Aug 28": "Friday, August 28 2026",
     "Match \u2014 Aug 29 (vs Metro State)": "Saturday, August 29 2026",
     "Practice \u2014 Aug 31": "Monday, August 31 2026",
+    "Practice \u2014 Sep 1": "Tuesday, September 01 2026",
 }
 
 
