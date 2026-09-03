@@ -14,12 +14,16 @@ third reads PDF reports straight off disk (see TESTING_PDF_DIR).
 import os
 import re
 import hashlib
+import base64
 from datetime import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+
+import fatigue
+import roster
 
 st.set_page_config(
     page_title="Point Loma Women's Soccer Sport Science Dashboard",
@@ -171,6 +175,72 @@ st.markdown(
             border-top: 2px solid #ffffff;
             border-bottom: 2px solid {PLNU_GREEN_DARK};
             margin-bottom: 22px;
+        }}
+
+        /* ---------------------------------------------------------------
+           Fatigue watchlist player cards
+        ----------------------------------------------------------------*/
+        .fatigue-card {{
+            border: 1px solid #e3e6e4;
+            border-left: 5px solid #d62728;
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }}
+        .fatigue-card-head {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .fatigue-avatar {{
+            border-radius: 50%;
+            object-fit: cover;
+            /* Roster headshots are ~3:4 portrait with the face in the top
+               third. A square center-crop would land on the jersey, so bias
+               the crop upward -- the point of the photo is face recognition. */
+            object-position: center 22%;
+            flex-shrink: 0;
+            border: 2px solid {PLNU_GOLD};
+        }}
+        .fatigue-avatar-blank {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: {PLNU_GREEN};
+            color: #ffffff;
+            font-family: 'Oswald', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }}
+        .fatigue-name {{
+            font-family: 'Oswald', sans-serif;
+            font-weight: 700;
+            font-size: 1.02rem;
+            color: {PLNU_GREEN};
+            line-height: 1.25;
+        }}
+        .fatigue-sub {{
+            font-size: 0.78rem;
+            color: #5c6663;
+            margin-top: 2px;
+        }}
+        .fatigue-tags {{
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }}
+        .fatigue-tag {{
+            background: #fdf1d6;
+            border: 1px solid {PLNU_GOLD};
+            color: #7a5c05;
+            border-radius: 11px;
+            padding: 2px 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            white-space: nowrap;
         }}
 
         /* ---------------------------------------------------------------
@@ -648,6 +718,57 @@ FLAG_COLORS = {
 }
 
 
+
+# ---------------------------------------------------------------------------
+# Fatigue watchlist (Tab 4)
+# ---------------------------------------------------------------------------
+
+@st.cache_data
+def load_gps_season():
+    """Every GPS session in the library, stacked and dated. The GPS tab loads
+    one session at a time; a rolling load window needs the season at once."""
+    frames = []
+    for label, filename in GPS_LIBRARY.items():
+        path = os.path.join(SAMPLE_DIR, filename)
+        if not os.path.exists(path):
+            continue
+        date = pd.to_datetime(GPS_SESSION_LABELS.get(label), errors="coerce")
+        if pd.isna(date):
+            token = parse_pdf_date(filename)
+            date = pd.to_datetime(token, errors="coerce") if token else pd.NaT
+        if pd.isna(date):
+            continue
+        is_match = label.strip().lower().startswith("match")
+        frames.append((date, is_match, pd.read_csv(path)))
+    return fatigue.prepare_gps(frames)
+
+
+def player_avatar_html(name, photo_path, size=68):
+    """A player's photo, or their initials on a PLNU-navy disc when no photo
+    has been uploaded yet. Some players will always be missing a picture
+    mid-season, so the placeholder is the normal case, not an error state."""
+    if photo_path and os.path.exists(photo_path):
+        with open(photo_path, "rb") as handle:
+            encoded = base64.b64encode(handle.read()).decode("ascii")
+        suffix = os.path.splitext(photo_path)[1].lstrip(".").lower() or "png"
+        mime = "jpeg" if suffix in ("jpg", "jpeg") else suffix
+        return (
+            f'<img class="fatigue-avatar" style="width:{size}px;height:{size}px" '
+            f'src="data:image/{mime};base64,{encoded}" alt="{name}">'
+        )
+    initials = "".join(part[0] for part in re.findall(r"[A-Za-z]+", name)[:2]).upper()
+    return (
+        f'<div class="fatigue-avatar fatigue-avatar-blank" '
+        f'style="width:{size}px;height:{size}px;font-size:{size // 3}px">{initials}</div>'
+    )
+
+
+def fmt_delta(value, suffix="%"):
+    if value is None or pd.isna(value):
+        return "\u2014"
+    return f"{value:+.0f}{suffix}"
+
+
 # ---------------------------------------------------------------------------
 # App header
 # ---------------------------------------------------------------------------
@@ -668,9 +789,10 @@ with header_text_col:
     )
 st.markdown("<div class='plnu-stripe'></div>", unsafe_allow_html=True)
 
-tab_cmj, tab_gps, tab_testing = st.tabs([
+tab_cmj, tab_gps, tab_fatigue, tab_testing = st.tabs([
     "\U0001F4CA CMJ Readiness",
     "\U0001F6F0\uFE0F GPS / Catapult",
+    "\U0001F6A9 Fatigue Watchlist",
     "\U0001F4C4 Testing Data",
 ])
 
@@ -1010,7 +1132,141 @@ with tab_gps:
 
 
 # ===========================================================================
-# TAB 3: TESTING DATA (PDF reports)
+# TAB 3: FATIGUE WATCHLIST
+# ===========================================================================
+with tab_fatigue:
+    st.markdown("#### Fatigue Watchlist")
+    st.caption(
+        f"Players carrying **both** signals at once: a countermovement jump in the bottom "
+        f"quartile of their own season, **and** a trailing {fatigue.WINDOW_DAYS}-day training "
+        f"load above their own {int(fatigue.PERCENTILE * 100)}th percentile. Every threshold "
+        "is per-player \u2014 nobody is measured against a squad average."
+    )
+
+    fatigue_cmj = load_excel(
+        os.path.join(SAMPLE_DIR, CMJ_LIBRARY["Season"]), CMJ_REQUIRED_COLUMNS
+    ).copy()
+    fatigue_cmj["Date"] = pd.to_datetime(fatigue_cmj["Date"], errors="coerce")
+    fatigue_cmj = derive_cmj_metrics(fatigue_cmj)
+    fatigue_gps = load_gps_season()
+    board = fatigue.build_board(fatigue_cmj, fatigue_gps)
+
+    if board.empty:
+        st.info("No CMJ or GPS data available to build the watchlist.")
+    else:
+        # Any spelling the roster does not recognise is surfaced rather than
+        # silently dropped -- a new signing must not vanish from the watchlist.
+        unknown = roster.unresolved(
+            set(fatigue_cmj["Player Name"].dropna())
+            | set(fatigue_gps["Player Name"].dropna() if not fatigue_gps.empty else [])
+        )
+        if unknown:
+            st.warning(
+                "These names are not in the roster, so their CMJ and GPS data could not "
+                "be joined: **" + "**, **".join(unknown) + "**. Add them to `roster.py`."
+            )
+
+        # A missing photo falls back to an initials disc, which looks intentional.
+        # Say so out loud, or a typo'd filename is invisible until someone notices
+        # a player who never shows a face.
+        no_photo, orphan_files = roster.photo_audit()
+        if no_photo or orphan_files:
+            notes = []
+            if no_photo:
+                notes.append("No photo found for **" + "**, **".join(no_photo) + "**.")
+            if orphan_files:
+                notes.append(
+                    "Image files no player claims: **" + "**, **".join(orphan_files) + "**."
+                )
+            st.warning(" ".join(notes) + " Check the filenames in `roster.py`.")
+
+        watchlist = board[board["On Watchlist"]]
+        counts = board["Status"].value_counts()
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("On watchlist", len(watchlist))
+        m2.metric("Elevated load only", int(counts.get("Load only", 0)))
+        m3.metric("Low CMJ only", int(counts.get("CMJ only", 0)))
+        m4.metric("Clear", int(counts.get("Clear", 0)))
+
+        st.markdown("---")
+
+        if watchlist.empty:
+            st.success(
+                "No player is currently flagged on both signals. Players showing only one "
+                "are listed in the full board below."
+            )
+        else:
+            for start in range(0, len(watchlist), 3):
+                for col, (_, row) in zip(
+                    st.columns(3), watchlist.iloc[start:start + 3].iterrows()
+                ):
+                    with col:
+                        load_deltas = []
+                        for metric in row["GPS Triggers"] or []:
+                            pct = fatigue.load_pct(row, metric)
+                            if pct is not None:
+                                short = "Load" if metric == "Player Load" else "High-speed"
+                                load_deltas.append(f"{short} {fmt_delta(pct)}")
+                        cmj_pct = None
+                        if pd.notna(row.get("CMJ Baseline")) and row["CMJ Baseline"]:
+                            cmj_pct = (row["CMJ Latest"] / row["CMJ Baseline"] - 1) * 100
+
+                        st.markdown(
+                            f"""
+                            <div class="fatigue-card">
+                              <div class="fatigue-card-head">
+                                {player_avatar_html(row['Player Name'], row['Photo'])}
+                                <div>
+                                  <div class="fatigue-name">{row['Player Name']}</div>
+                                  <div class="fatigue-sub">{row['CMJ Latest']:.1f} cm jump
+                                    &nbsp;\u00b7&nbsp; {fmt_delta(cmj_pct)} vs. her median</div>
+                                </div>
+                              </div>
+                              <div class="fatigue-tags">
+                                {''.join(f'<span class="fatigue-tag">{d}</span>' for d in load_deltas)
+                                 or '<span class="fatigue-tag">Elevated load</span>'}
+                              </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+        st.markdown("---")
+        st.markdown("##### Full board")
+        display = board.copy()
+        display["GPS Triggers"] = display["GPS Triggers"].apply(
+            lambda triggers: ", ".join(triggers) if isinstance(triggers, list) else ""
+        )
+        st.dataframe(
+            display[[
+                "Player Name", "Status", "CMJ Latest", "CMJ Threshold", "CMJ Tests",
+                "Player Load Current", "Player Load Threshold",
+                "HI + Sprint Distance Current", "HI + Sprint Distance Threshold",
+                "GPS Triggers",
+            ]],
+            width="stretch",
+            hide_index=True,
+        )
+        st.caption(
+            f"**Reading the board.** *Watchlist* = both signals. *Load only* / *CMJ only* = one "
+            f"signal, worth watching but not acted on. *Not enough history* = fewer than "
+            f"{fatigue.MIN_HISTORY} complete {fatigue.WINDOW_DAYS}-day windows or CMJ tests, so "
+            "a personal percentile is not yet meaningful \u2014 these players are neither "
+            "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
+            "export, so they can never reach the watchlist."
+        )
+        st.info(
+            "**Preseason caveat.** Squad load is still ramping \u2014 median 7-day Player Load "
+            "has climbed every week since Aug 21 \u2014 so most players are near their "
+            "season-high by construction and the load half of the test flags widely. The CMJ "
+            "half is doing the real discriminating work right now. Expect the load signal to "
+            "sharpen once volume plateaus in-season."
+        )
+
+
+# ===========================================================================
+# TAB 4: TESTING DATA (PDF reports)
 # ===========================================================================
 with tab_testing:
     testing_docs = scan_testing_pdfs(TESTING_PDF_DIR)
