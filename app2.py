@@ -1,14 +1,19 @@
 """
 Women's Soccer Sport Science Dashboard
 ----------------------------------------
-Three independent tabs:
-  1. CMJ Readiness   - daily pre-practice countermovement jump testing
-  2. GPS / Catapult   - session load & movement data
-  3. Testing Data     - PDF testing reports, filterable by date
+Four tabs:
+  1. CMJ Readiness    - daily pre-practice countermovement jump testing
+  2. GPS / Catapult    - session load & movement data
+  3. Fatigue Watchlist - players flagged by BOTH a low CMJ and a high
+                         rolling GPS load, each judged against their own
+                         history (see fatigue.py)
+  4. Testing Data      - PDF testing reports, filterable by date
 
 The first two tabs each have their own sample-data library (dropdown) AND
 their own file uploader, completely independent of the other tab. The
-third reads PDF reports straight off disk (see TESTING_PDF_DIR).
+Fatigue Watchlist reads the whole library at once rather than one session,
+since a rolling load window needs the season. Testing Data reads PDF
+reports straight off disk (see TESTING_PDF_DIR).
 """
 
 import os
@@ -24,6 +29,7 @@ import plotly.graph_objects as go
 
 import fatigue
 import roster
+import catapult
 
 st.set_page_config(
     page_title="Point Loma Women's Soccer Sport Science Dashboard",
@@ -416,6 +422,8 @@ GPS_LIBRARY = {
     "Practice \u2014 Aug 31": "ctr-report-8_31_2026-practice.csv",
     "Practice \u2014 Sep 1": "ctr-report-9_1_2026-practice.csv",
     "Practice \u2014 Sep 2": "ctr-report-9_2_2026-practice.csv",
+    "Match \u2014 Sep 3 (vs Stanislaus)": "ctr-report-9_3_2026-Stanislaus.csv",
+    "Practice \u2014 Sep 4": "ctr-report-9_4_2026-practice.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -431,6 +439,8 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Aug 31": "Monday, August 31 2026",
     "Practice \u2014 Sep 1": "Tuesday, September 01 2026",
     "Practice \u2014 Sep 2": "Wednesday, September 02 2026",
+    "Match \u2014 Sep 3 (vs Stanislaus)": "Thursday, September 03 2026",
+    "Practice \u2014 Sep 4": "Friday, September 04 2026",
 }
 
 
@@ -442,7 +452,7 @@ GPS_SESSION_LABELS = {
 def load_excel(path_or_buffer, expected_columns=None):
     name = getattr(path_or_buffer, "name", path_or_buffer)
     if str(name).lower().endswith(".csv"):
-        df = pd.read_csv(path_or_buffer)
+        df = catapult.read_csv(path_or_buffer)
     else:
         df = pd.read_excel(path_or_buffer)
     if expected_columns is not None:
@@ -484,7 +494,7 @@ def data_source_picker(tab_key, library_dict, expected_columns, label):
         )
         if uploaded is not None:
             if uploaded.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded)
+                df = catapult.read_csv(uploaded)
             else:
                 df = load_excel(uploaded, expected_columns)
             st.caption(f"Loaded upload: **{uploaded.name}**")
@@ -739,7 +749,7 @@ def load_gps_season():
         if pd.isna(date):
             continue
         is_match = label.strip().lower().startswith("match")
-        frames.append((date, is_match, pd.read_csv(path)))
+        frames.append((date, is_match, catapult.read_csv(path)))
     return fatigue.prepare_gps(frames)
 
 
@@ -764,8 +774,16 @@ def player_avatar_html(name, photo_path, size=68):
 
 
 def fmt_delta(value, suffix="%"):
+    """Signed percentage for a card tag. A percentile test is a threshold, so
+    a player can trip it by a hair -- rounding those to a flat "+0%" makes a
+    real (if marginal) flag look like a rendering bug, so sub-1% margins keep
+    a decimal and anything smaller is shown as the near-tie it is."""
     if value is None or pd.isna(value):
         return "\u2014"
+    if abs(value) < 0.05:
+        return f"~0{suffix}"
+    if abs(value) < 1:
+        return f"{value:+.1f}{suffix}"
     return f"{value:+.0f}{suffix}"
 
 
@@ -1256,13 +1274,28 @@ with tab_fatigue:
             "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
             "export, so they can never reach the watchlist."
         )
-        st.info(
-            "**Preseason caveat.** Squad load is still ramping \u2014 median 7-day Player Load "
-            "has climbed every week since Aug 21 \u2014 so most players are near their "
-            "season-high by construction and the load half of the test flags widely. The CMJ "
-            "half is doing the real discriminating work right now. Expect the load signal to "
-            "sharpen once volume plateaus in-season."
-        )
+        # Stated from the data rather than hardcoded: this was true during the
+        # August ramp and stopped being true once volume levelled off, and a
+        # frozen caveat would have gone on asserting it.
+        ramping = fatigue.is_ramping(fatigue_gps)
+        trend = fatigue.squad_load_trend(fatigue_gps)
+        if ramping is None:
+            pass
+        elif ramping:
+            st.info(
+                "**Squad load is still ramping.** Median 7-day Player Load has climbed from "
+                f"{trend.iloc[0]:,.0f} to {trend.iloc[-1]:,.0f} across the season so far, so "
+                "most players sit near a season high by construction and the load half of the "
+                "test flags widely. The CMJ half is doing the real discriminating work until "
+                "volume plateaus."
+            )
+        else:
+            change = (trend.iloc[-1] / trend.max() - 1) * 100
+            st.caption(
+                f"Squad load has plateaued \u2014 median 7-day Player Load peaked at "
+                f"{trend.max():,.0f} and now sits at {trend.iloc[-1]:,.0f} ({change:+.0f}% off "
+                "peak), so both halves of the test are discriminating normally."
+            )
 
 
 # ===========================================================================

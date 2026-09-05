@@ -244,6 +244,43 @@ def build_board(cmj_df, daily_gps):
     ).reset_index(drop=True)
 
 
+def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
+    """Squad-median rolling load per session date, over complete windows only.
+
+    While the squad is ramping, almost everyone sits near a season high by
+    construction and the load half of the test flags widely -- true early in
+    preseason, misleading once volume plateaus. Reporting the trend from the
+    data keeps the tab's caveat honest instead of freezing whatever was true
+    the day it was written.
+    """
+    if daily.empty:
+        return pd.Series(dtype=float)
+    rolled = rolling_load(daily, window_days)
+    rolled = rolled[rolled["Window Complete"]]
+    if rolled.empty:
+        return pd.Series(dtype=float)
+    return rolled.groupby("Date")[f"{metric} ({window_days}d)"].median().sort_index()
+
+
+def is_ramping(daily, window_days=WINDOW_DAYS, lookback=3, threshold=0.05,
+               peak_ratio=0.98):
+    """Is squad load still climbing? Returns None when history is too short.
+
+    Requires two things: the latest window is up on the one `lookback`
+    sessions back, AND it is still at (or within `peak_ratio` of) the season
+    peak. The peak check is what makes this honest across a turning point --
+    comparing only to N sessions ago straddles the peak itself, so a squad
+    two sessions into a taper still reads as ramping when the window happens
+    to start below it.
+    """
+    trend = squad_load_trend(daily, window_days)
+    if len(trend) < lookback + 1:
+        return None
+    rising = trend.iloc[-1] / trend.iloc[-(lookback + 1)] - 1 > threshold
+    at_peak = trend.iloc[-1] >= peak_ratio * trend.max()
+    return bool(rising and at_peak)
+
+
 def load_pct(row, metric):
     """How far above (or below) her own threshold a player's current window
     sits, as a percentage. Used for the '+18% vs. her usual' style caption."""
