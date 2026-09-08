@@ -342,8 +342,11 @@ def build_board(cmj_df, daily_gps):
         return board.reset_index(drop=True)
 
     board = cmj.merge(gps, on="Player Name", how="outer")
-    board["CMJ Fatigued"] = board["CMJ Fatigued"].fillna(False).astype(bool)
-    board["GPS Fatigued"] = board["GPS Fatigued"].fillna(False).astype(bool)
+    # eq(True) rather than fillna(False).astype(bool): the outer merge leaves an
+    # object column, and fillna's silent downcast of one is deprecated. eq gives
+    # a real bool column in one step, with a missing flag reading as not-flagged.
+    board["CMJ Fatigued"] = board["CMJ Fatigued"].eq(True)
+    board["GPS Fatigued"] = board["GPS Fatigued"].eq(True)
     board["On Watchlist"] = board["CMJ Fatigued"] & board["GPS Fatigued"]
 
     # Latest session in the data, used to ask whether an exclusion is still open.
@@ -384,9 +387,15 @@ def build_board(cmj_df, daily_gps):
         for column in gps_columns:
             if column == "GPS Triggers":
                 board.loc[excluded, column] = board.loc[excluded, column].apply(lambda _: [])
+            elif pd.api.types.is_bool_dtype(board[column]):
+                # A bool column cannot hold NaN, and "GPS Fatigued" is swept up
+                # by the prefix above. Pandas used to widen it to object with a
+                # FutureWarning, which Streamlit swallows, so this passed locally
+                # and raised TypeError on the newer pandas in the deployment.
+                # Blank means "not flagged" for a boolean, so say so explicitly.
+                board.loc[excluded, column] = False
             else:
                 board.loc[excluded, column] = np.nan
-        board.loc[excluded, "GPS Fatigued"] = False
     # A rostered player with no usable reading on either side matches nothing to
     # merge and would otherwise leave no row at all. Emma Blakely is on the CMJ
     # sheet every test day with the jump columns blank and has never worn a pod,
