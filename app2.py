@@ -424,6 +424,7 @@ GPS_LIBRARY = {
     "Practice \u2014 Sep 2": "ctr-report-9_2_2026-practice.csv",
     "Match \u2014 Sep 3 (vs Stanislaus)": "ctr-report-9_3_2026-Stanislaus.csv",
     "Practice \u2014 Sep 4": "ctr-report-9_4_2026-practice.csv",
+    "Match \u2014 Sep 5 (vs CPP)": "ctr-report-9_5_2026-CPP.csv",
     # Sep 7 came out of Catapult as two reports: the main practice, plus a
     # later block for five of the same players. Separate captures of separate
     # work, so both parts make up the one session (see catapult.read_session).
@@ -448,6 +449,7 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Sep 2": "Wednesday, September 02 2026",
     "Match \u2014 Sep 3 (vs Stanislaus)": "Thursday, September 03 2026",
     "Practice \u2014 Sep 4": "Friday, September 04 2026",
+    "Match \u2014 Sep 5 (vs CPP)": "Saturday, September 05 2026",
     "Practice \u2014 Sep 7": "Monday, September 07 2026",
 }
 
@@ -985,6 +987,23 @@ with tab_gps:
         else:
             session_label = "Uploaded Session"
 
+        # This tab deliberately shows the export as it came, exclusions and all,
+        # so a capture recorded from a moving vehicle would otherwise sit in the
+        # team averages unannounced -- the Sep 5 trip to CPP put five 27 km rows
+        # in a match where nobody ran more than 2.3 km.
+        if "Max Velocity" in gps_df.columns and "Player Name" in gps_df.columns:
+            speeds = pd.to_numeric(gps_df["Max Velocity"], errors="coerce")
+            impossible = gps_df.loc[speeds > fatigue.IMPLAUSIBLE_VELOCITY, "Player Name"]
+            if not impossible.empty:
+                names = ", ".join(f"**{n}**" for n in sorted(set(impossible)))
+                st.warning(
+                    f"{names} recorded a peak speed above "
+                    f"{fatigue.IMPLAUSIBLE_VELOCITY * 3.6:.0f} km/h in this session — faster "
+                    "than anyone runs, so the pod was most likely left on in a vehicle. Those "
+                    "rows are included in the charts and team averages below, and inflate "
+                    "them. The Fatigue Watchlist excludes them."
+                )
+
         with left2:
             st.markdown("#### Filters")
             players2 = sorted(gps_df["Player Name"].dropna().unique().tolist()) if "Player Name" in gps_df.columns else []
@@ -1268,6 +1287,23 @@ with tab_fatigue:
                 f"GPS ignored for {notes}. Their load cannot be scored, so they can "
                 "neither be flagged nor cleared on it — the CMJ column still applies. "
                 "Clear the entry in `fatigue.EXCLUDED_CAPTURES` once the capture is good again."
+            )
+
+        # Anything left after the exclusions that no runner could have produced.
+        suspect = fatigue.suspect_captures(fatigue_gps)
+        if not suspect.empty:
+            lines = ", ".join(
+                # %b %d, not %-d: the dash form is POSIX-only and raises on
+                # Windows, where this app is developed.
+                f"**{row['Player Name']}** on {row['Date']:%b %d} "
+                f"({row['Max Velocity'] * 3.6:.0f} km/h)"
+                for _, row in suspect.iterrows()
+            )
+            st.warning(
+                f"Peak speed above {fatigue.IMPLAUSIBLE_VELOCITY * 3.6:.0f} km/h — faster "
+                f"than anyone runs — for {lines}. That usually means a pod was left on in "
+                "a vehicle, and the day's load is inflated. Add it to "
+                "`fatigue.EXCLUDED_CAPTURES` if so."
             )
 
         watchlist = board[board["On Watchlist"]]

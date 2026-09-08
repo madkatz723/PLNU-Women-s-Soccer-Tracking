@@ -50,7 +50,9 @@ MIN_HISTORY = 4
 # week would have read as 37% above her own p75 once the pod was swapped --
 # a false flag lasting until enough good weeks diluted the zeros.
 #
-# `end` is None while a fault is open. Dates are inclusive.
+# `player` may name one athlete or several -- a pod fault is usually personal,
+# but travel contamination hits everyone whose pod shared the vehicle. `end` is
+# None while a fault is open. Dates are inclusive.
 EXCLUDED_CAPTURES = [
     {
         "player": "Lila Jones",
@@ -58,7 +60,60 @@ EXCLUDED_CAPTURES = [
         "end": None,
         "reason": "faulty pod awaiting replacement",
     },
+    {
+        # Five pods ran through the coach trip to Cal Poly Pomona: 4.6 hours,
+        # 27 km and a top speed of 122 km/h each, against 21-24 km/h for the
+        # team-mates whose pods were switched off. Their real match work is
+        # inside those totals and cannot be separated from the drive, so the
+        # honest reading is that Sep 5 is unknown for these five rather than
+        # enormous. Left in, it would have raised their load thresholds far
+        # enough to mask a genuinely hard week later in the season.
+        "player": [
+            "Madilyn Audet",
+            "Riley Johnson",
+            "Grace Nelson",
+            "Gianna Masinter",
+            "Abby Wright",
+        ],
+        "start": "2026-09-05",
+        "end": "2026-09-05",
+        "reason": "pod left running during travel to CPP",
+    },
 ]
+
+
+# A top speed no footballer reaches. The squad's own season high is about
+# 7.3 m/s and a world-class sprinter peaks near 12, so anything past this did
+# not come from someone running. The Sep 5 travel rows read 34 m/s.
+IMPLAUSIBLE_VELOCITY = 12.0
+
+
+def suspect_captures(daily, limit=IMPLAUSIBLE_VELOCITY):
+    """Player-days whose peak speed is too high to have come from running.
+
+    A pod left switched on in a vehicle produces a plausible-looking load total
+    attached to an impossible top speed, and it inflates the player's own
+    threshold rather than obviously breaking anything. This was caught by hand
+    once; the check exists so the next one is caught by the tab. It reports
+    rather than drops -- deciding a capture is junk is a judgement for whoever
+    knows what happened that day, recorded in EXCLUDED_CAPTURES.
+    """
+    if daily.empty or "Max Velocity" not in daily.columns:
+        return pd.DataFrame(columns=["Player Name", "Date", "Max Velocity"])
+    suspect = daily[daily["Max Velocity"] > limit]
+    return suspect[["Player Name", "Date", "Max Velocity"]].sort_values(
+        ["Date", "Player Name"]
+    ).reset_index(drop=True)
+
+
+def _rule_players(rule):
+    """Canonical names an exclusion rule covers. `player` may be one name or a
+    list, resolved through the roster so a rule holds however an export spelled
+    the athlete."""
+    named = rule["player"]
+    if isinstance(named, str):
+        named = [named]
+    return [roster.resolve(name) or name for name in named]
 
 
 def _excluded_mask(df):
@@ -68,8 +123,7 @@ def _excluded_mask(df):
     if df.empty:
         return mask
     for rule in EXCLUDED_CAPTURES:
-        player = roster.resolve(rule["player"]) or rule["player"]
-        covered = df["Player Name"] == player
+        covered = df["Player Name"].isin(_rule_players(rule))
         start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
         end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
         if start is not None:
@@ -90,7 +144,7 @@ def active_exclusion(player, as_of=None):
     canonical = roster.resolve(player) or player
     as_of = pd.to_datetime(as_of) if as_of is not None else None
     for rule in EXCLUDED_CAPTURES:
-        if (roster.resolve(rule["player"]) or rule["player"]) != canonical:
+        if canonical not in _rule_players(rule):
             continue
         start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
         end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
@@ -126,7 +180,8 @@ def prepare_gps(frames):
     df["Raw Name"] = df["Player Name"].astype(str).str.strip()
     df["Player Name"] = roster.canonicalize(df["Raw Name"])
 
-    for col in ("Player Load", "HI Distance", "Sprint Distance", "Distance"):
+    for col in ("Player Load", "HI Distance", "Sprint Distance", "Distance",
+                "Max Velocity"):
         if col not in df.columns:
             df[col] = np.nan
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -137,6 +192,9 @@ def prepare_gps(frames):
     agg = {metric: "sum" for metric in LOAD_METRICS}
     agg["Distance"] = "sum"
     agg["Is Match"] = "max"
+    # Carried through so a capture can be sanity-checked after the fact; a peak
+    # speed is a property of the day, not something to add up.
+    agg["Max Velocity"] = "max"
     # Drop known-bad captures before any aggregation, so they reach neither a
     # player's current window nor the distribution it is compared against.
     df = df[~_excluded_mask(df)]
