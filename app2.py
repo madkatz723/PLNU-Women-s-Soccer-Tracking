@@ -424,6 +424,13 @@ GPS_LIBRARY = {
     "Practice \u2014 Sep 2": "ctr-report-9_2_2026-practice.csv",
     "Match \u2014 Sep 3 (vs Stanislaus)": "ctr-report-9_3_2026-Stanislaus.csv",
     "Practice \u2014 Sep 4": "ctr-report-9_4_2026-practice.csv",
+    # Sep 7 came out of Catapult as two reports: the main practice, plus a
+    # later block for five of the same players. Separate captures of separate
+    # work, so both parts make up the one session (see catapult.read_session).
+    "Practice \u2014 Sep 7": [
+        "ctr-report-9_7_2026-practice.csv",
+        "ctr-report-9_7_2026-practice-2.csv",
+    ],
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -441,12 +448,46 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Sep 2": "Wednesday, September 02 2026",
     "Match \u2014 Sep 3 (vs Stanislaus)": "Thursday, September 03 2026",
     "Practice \u2014 Sep 4": "Friday, September 04 2026",
+    "Practice \u2014 Sep 7": "Monday, September 07 2026",
 }
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def gps_session_paths(label):
+    """Full paths backing one GPS library entry, skipping any that are absent.
+
+    An entry is normally a single filename, but a session that Catapult split
+    across several reports lists them all (see GPS_LIBRARY), so every consumer
+    goes through here rather than assuming one file per session.
+    """
+    entry = GPS_LIBRARY.get(label)
+    if entry is None:
+        return []
+    filenames = [entry] if isinstance(entry, str) else list(entry)
+    paths = [os.path.join(SAMPLE_DIR, name) for name in filenames]
+    return [p for p in paths if os.path.exists(p)]
+
+
+@st.cache_data
+def load_gps_session(paths, expected_columns=None):
+    """Load one GPS session from the paths backing it, joining the parts if it
+    has more than one. `paths` is a tuple so it stays hashable for the cache."""
+    paths = list(paths)
+    if not paths:
+        return None
+    df = catapult.read_session(paths)
+    if expected_columns is not None:
+        missing = [c for c in expected_columns if c not in df.columns]
+        if missing:
+            st.warning(
+                f"Session is missing expected columns: {', '.join(missing)}. "
+                "Charts relying on these fields may not render."
+            )
+    return df
+
 
 @st.cache_data
 def load_excel(path_or_buffer, expected_columns=None):
@@ -483,9 +524,25 @@ def data_source_picker(tab_key, library_dict, expected_columns, label):
             list(library_dict.keys()),
             key=f"{tab_key}_library_choice",
         )
-        path = os.path.join(SAMPLE_DIR, library_dict[choice])
-        df = load_excel(path, expected_columns)
-        st.caption(f"Loaded from library: **{choice}**")
+        entry = library_dict[choice]
+        if isinstance(entry, str):
+            paths = [os.path.join(SAMPLE_DIR, entry)]
+        else:
+            paths = [os.path.join(SAMPLE_DIR, name) for name in entry]
+
+        if str(paths[0]).lower().endswith(".csv"):
+            # A session Catapult split across several reports is loaded as one.
+            df = load_gps_session(tuple(paths), expected_columns)
+        else:
+            df = load_excel(paths[0], expected_columns)
+
+        if len(paths) > 1:
+            st.caption(
+                f"Loaded from library: **{choice}** — combined from "
+                f"{len(paths)} exports of the same session."
+            )
+        else:
+            st.caption(f"Loaded from library: **{choice}**")
     else:
         uploaded = st.file_uploader(
             f"Upload {label} Excel/CSV file",
@@ -738,18 +795,18 @@ def load_gps_season():
     """Every GPS session in the library, stacked and dated. The GPS tab loads
     one session at a time; a rolling load window needs the season at once."""
     frames = []
-    for label, filename in GPS_LIBRARY.items():
-        path = os.path.join(SAMPLE_DIR, filename)
-        if not os.path.exists(path):
+    for label in GPS_LIBRARY:
+        paths = gps_session_paths(label)
+        if not paths:
             continue
         date = pd.to_datetime(GPS_SESSION_LABELS.get(label), errors="coerce")
         if pd.isna(date):
-            token = parse_pdf_date(filename)
+            token = parse_pdf_date(os.path.basename(paths[0]))
             date = pd.to_datetime(token, errors="coerce") if token else pd.NaT
         if pd.isna(date):
             continue
         is_match = label.strip().lower().startswith("match")
-        frames.append((date, is_match, catapult.read_csv(path)))
+        frames.append((date, is_match, catapult.read_session(paths)))
     return fatigue.prepare_gps(frames)
 
 
@@ -1277,11 +1334,10 @@ with tab_fatigue:
         # Stated from the data rather than hardcoded: this was true during the
         # August ramp and stopped being true once volume levelled off, and a
         # frozen caveat would have gone on asserting it.
-        ramping = fatigue.is_ramping(fatigue_gps)
+        phase = fatigue.load_phase(fatigue_gps)
         trend = fatigue.squad_load_trend(fatigue_gps)
-        if ramping is None:
-            pass
-        elif ramping:
+        off_peak = (trend.iloc[-1] / trend.max() - 1) * 100 if len(trend) else 0
+        if phase == "ramping":
             st.info(
                 "**Squad load is still ramping.** Median 7-day Player Load has climbed from "
                 f"{trend.iloc[0]:,.0f} to {trend.iloc[-1]:,.0f} across the season so far, so "
@@ -1289,12 +1345,19 @@ with tab_fatigue:
                 "test flags widely. The CMJ half is doing the real discriminating work until "
                 "volume plateaus."
             )
-        else:
-            change = (trend.iloc[-1] / trend.max() - 1) * 100
+        elif phase == "deload":
+            st.info(
+                "**Squad load has dropped sharply.** Median 7-day Player Load peaked at "
+                f"{trend.max():,.0f} and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off "
+                "peak). Almost nobody can clear their own 75th percentile on a week this light, "
+                "so a short watchlist reflects the lighter week rather than a squad that has "
+                "recovered \u2014 read the CMJ column on its own until load builds back."
+            )
+        elif phase == "steady":
             st.caption(
-                f"Squad load has plateaued \u2014 median 7-day Player Load peaked at "
-                f"{trend.max():,.0f} and now sits at {trend.iloc[-1]:,.0f} ({change:+.0f}% off "
-                "peak), so both halves of the test are discriminating normally."
+                f"Squad load is steady \u2014 median 7-day Player Load peaked at {trend.max():,.0f} "
+                f"and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off peak), so both "
+                "halves of the test are discriminating normally."
             )
 
 

@@ -50,7 +50,7 @@ ROSTER = {
     "Abby Wright":                ([], "AbbyW_pic.webp"),
     # On the CMJ sheet but no GPS pod data so far this season.
     "Tessa Anastasi":             ([], "Tessa_pic.webp"),
-    "Madilyn Audet":              ([], "MadiA_pic.webp"),
+    "Madilyn Audet":              (["Madi Audet"], "MadiA_pic.webp"),
     "Emma Blakely":               ([], "EmmaB_pic.webp"),
     "Beatrice Levi":              (["Bea Levi"], "Bea_pic.webp"),
     "Cameron Simmons":            (["Cam Simmons"], "CameronS_pic.webp"),

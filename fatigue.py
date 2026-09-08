@@ -262,23 +262,38 @@ def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
     return rolled.groupby("Date")[f"{metric} ({window_days}d)"].median().sort_index()
 
 
-def is_ramping(daily, window_days=WINDOW_DAYS, lookback=3, threshold=0.05,
-               peak_ratio=0.98):
-    """Is squad load still climbing? Returns None when history is too short.
+def load_phase(daily, window_days=WINDOW_DAYS, lookback=3, threshold=0.05,
+               peak_ratio=0.98, deload_ratio=0.85):
+    """Where squad load sits relative to its own season: "ramping", "steady",
+    "deload", or None when history is too short to say.
 
-    Requires two things: the latest window is up on the one `lookback`
-    sessions back, AND it is still at (or within `peak_ratio` of) the season
-    peak. The peak check is what makes this honest across a turning point --
-    comparing only to N sessions ago straddles the peak itself, so a squad
-    two sessions into a taper still reads as ramping when the window happens
-    to start below it.
+    Each phase changes how an empty watchlist should be read, so the tab says
+    which one it is rather than leaving a coach to assume:
+
+      ramping  -- the latest window is both up on recent sessions and still at
+                  the season peak. Nearly everyone sits near a personal high by
+                  construction, so the load half flags widely.
+      deload   -- the latest window is well below the peak. Almost nobody can
+                  clear their own 75th percentile, so few or no players trip
+                  the load half and an empty watchlist reflects the taper
+                  rather than a recovered squad.
+      steady   -- in between, where both halves discriminate normally.
+
+    The peak comparison is what keeps this honest across a turning point:
+    checking only against N sessions ago straddles the peak itself, so a squad
+    two sessions into a taper would still read as ramping.
     """
     trend = squad_load_trend(daily, window_days)
     if len(trend) < lookback + 1:
         return None
-    rising = trend.iloc[-1] / trend.iloc[-(lookback + 1)] - 1 > threshold
-    at_peak = trend.iloc[-1] >= peak_ratio * trend.max()
-    return bool(rising and at_peak)
+
+    latest, peak = trend.iloc[-1], trend.max()
+    if latest < deload_ratio * peak:
+        return "deload"
+    rising = latest / trend.iloc[-(lookback + 1)] - 1 > threshold
+    if rising and latest >= peak_ratio * peak:
+        return "ramping"
+    return "steady"
 
 
 def load_pct(row, metric):

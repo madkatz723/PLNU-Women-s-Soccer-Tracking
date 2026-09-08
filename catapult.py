@@ -88,6 +88,44 @@ def read_csv(source):
     return df.reset_index(drop=True)
 
 
+def read_session(sources):
+    """Read one session that may have been exported as several files.
+
+    A session sometimes comes out of Catapult as more than one report -- on
+    Sep 7 2026 the main practice was one export and a smaller block for five
+    players was another. The two are separate captures of separate work, not
+    a re-export of the same minutes, so the rows are concatenated and left for
+    the caller to sum per player, exactly as a multi-period export is handled.
+
+    Where the parts reuse a period label (both Sep 7 files call theirs
+    "Session") the later part is suffixed, so the totals stay correct while
+    the Period filter can still tell the two blocks apart. Without that the
+    two blocks would be indistinguishable in the UI, and a player who trained
+    twice would look like a single row that happened to be large.
+    """
+    if isinstance(sources, (str, bytes)) or hasattr(sources, "read"):
+        return read_csv(sources)
+
+    sources = list(sources)
+    if len(sources) == 1:
+        return read_csv(sources[0])
+
+    parts = []
+    seen_labels = set()
+    for index, source in enumerate(sources, start=1):
+        part = read_csv(source)
+        if "Period Name" in part.columns and index > 1:
+            labels = set(part["Period Name"].dropna().astype(str))
+            if labels & seen_labels:
+                part["Period Name"] = part["Period Name"].astype(str) + f" ({index})"
+        if "Period Name" in part.columns:
+            seen_labels |= set(part["Period Name"].dropna().astype(str))
+        part["Source Part"] = index
+        parts.append(part)
+
+    return pd.concat(parts, ignore_index=True)
+
+
 def collapse_duplicate_periods(df):
     """Drop rows that repeat a measurement under a second period label.
 
