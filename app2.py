@@ -1255,6 +1255,21 @@ with tab_fatigue:
                 )
             st.warning(" ".join(notes) + " Check the filenames in `roster.py`.")
 
+        # An exclusion is a deliberate blind spot, so name it. Silently
+        # dropping a player would leave the tab looking complete when it is not.
+        excluded_rows = board[board["Status"] == "GPS excluded"]
+        if not excluded_rows.empty:
+            notes = ", ".join(
+                f"**{row['Player Name']}** "
+                f"({fatigue.active_exclusion(row['Player Name'], board['GPS Date'].max())})"
+                for _, row in excluded_rows.iterrows()
+            )
+            st.warning(
+                f"GPS ignored for {notes}. Their load cannot be scored, so they can "
+                "neither be flagged nor cleared on it — the CMJ column still applies. "
+                "Clear the entry in `fatigue.EXCLUDED_CAPTURES` once the capture is good again."
+            )
+
         watchlist = board[board["On Watchlist"]]
         counts = board["Status"].value_counts()
 
@@ -1329,7 +1344,9 @@ with tab_fatigue:
             f"{fatigue.MIN_HISTORY} complete {fatigue.WINDOW_DAYS}-day windows or CMJ tests, so "
             "a personal percentile is not yet meaningful \u2014 these players are neither "
             "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
-            "export, so they can never reach the watchlist."
+            "export, so they can never reach the watchlist. *GPS excluded* = a known-bad "
+            "capture, ignored on purpose. *No data* = rostered but no usable reading on "
+            "either side all season."
         )
         # Stated from the data rather than hardcoded: this was true during the
         # August ramp and stopped being true once volume levelled off, and a

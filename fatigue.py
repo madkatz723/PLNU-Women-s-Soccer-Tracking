@@ -21,6 +21,10 @@ import pandas as pd
 
 import roster
 
+# Every rostered player, so the board can show one row each even for a player
+# who produced no usable reading on either side this season.
+ROSTER_ORDER = list(roster.ROSTER)
+
 # GPS metrics standing in for "fatigue-inducing work". Player Load is the
 # accumulated-load headline number; the high-speed pair captures the short,
 # explosive session that Player Load alone under-reports. A player trips the
@@ -35,6 +39,68 @@ PERCENTILE = 0.75
 # anything. Below this we report insufficient history rather than flagging or
 # clearing her -- an empty history should never read as "clear".
 MIN_HISTORY = 4
+
+# Captures known to be invalid, dropped before anything is scored.
+#
+# A dead pod does not read as missing data, it reads as a very easy week, and
+# that is worse than a gap in two ways: the player is reported "Clear" on
+# numbers that describe nothing, and the near-zero windows sit in her own
+# reference distribution and drag her personal 75th percentile down. Lila
+# Jones' threshold fell to about a third of the squad's that way, so a normal
+# week would have read as 37% above her own p75 once the pod was swapped --
+# a false flag lasting until enough good weeks diluted the zeros.
+#
+# `end` is None while a fault is open. Dates are inclusive.
+EXCLUDED_CAPTURES = [
+    {
+        "player": "Lila Jones",
+        "start": "2026-09-01",
+        "end": None,
+        "reason": "faulty pod awaiting replacement",
+    },
+]
+
+
+def _excluded_mask(df):
+    """Rows covered by an EXCLUDED_CAPTURES entry, matched on canonical name so
+    an exclusion holds however the export spelled the player."""
+    mask = pd.Series(False, index=df.index)
+    if df.empty:
+        return mask
+    for rule in EXCLUDED_CAPTURES:
+        player = roster.resolve(rule["player"]) or rule["player"]
+        covered = df["Player Name"] == player
+        start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
+        end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
+        if start is not None:
+            covered &= df["Date"] >= start
+        if end is not None:
+            covered &= df["Date"] <= end
+        mask |= covered
+    return mask
+
+
+def active_exclusion(player, as_of=None):
+    """The reason a player's GPS is being ignored as of `as_of`, or None.
+
+    Used to label her on the board rather than leaving her to be scored on
+    whatever partial history survives the exclusion -- a stale window is no
+    more meaningful than the bad one it replaced.
+    """
+    canonical = roster.resolve(player) or player
+    as_of = pd.to_datetime(as_of) if as_of is not None else None
+    for rule in EXCLUDED_CAPTURES:
+        if (roster.resolve(rule["player"]) or rule["player"]) != canonical:
+            continue
+        start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
+        end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
+        if as_of is not None:
+            if start is not None and as_of < start:
+                continue
+            if end is not None and as_of > end:
+                continue
+        return rule.get("reason", "excluded capture")
+    return None
 
 
 def prepare_gps(frames):
@@ -71,6 +137,10 @@ def prepare_gps(frames):
     agg = {metric: "sum" for metric in LOAD_METRICS}
     agg["Distance"] = "sum"
     agg["Is Match"] = "max"
+    # Drop known-bad captures before any aggregation, so they reach neither a
+    # player's current window nor the distribution it is compared against.
+    df = df[~_excluded_mask(df)]
+
     daily = df.groupby(["Player Name", "Date"], as_index=False).agg(agg)
     return daily.sort_values(["Player Name", "Date"], kind="stable").reset_index(drop=True)
 
@@ -218,9 +288,16 @@ def build_board(cmj_df, daily_gps):
     board["GPS Fatigued"] = board["GPS Fatigued"].fillna(False).astype(bool)
     board["On Watchlist"] = board["CMJ Fatigued"] & board["GPS Fatigued"]
 
+    # Latest session in the data, used to ask whether an exclusion is still open.
+    as_of = board["GPS Date"].max() if board["GPS Date"].notna().any() else None
+
     def status(row):
         if pd.isna(row.get("CMJ Latest")):
             return "No CMJ data"
+        # An open exclusion outranks whatever survives it: scoring her on a
+        # stale pre-fault window would clear or flag her on the wrong week.
+        if active_exclusion(row["Player Name"], as_of):
+            return "GPS excluded"
         if pd.isna(row.get("GPS Date")):
             return "No GPS data"
         if row.get("CMJ Tests", 0) < MIN_HISTORY or row.get("GPS Windows", 0) < MIN_HISTORY:
@@ -237,6 +314,39 @@ def build_board(cmj_df, daily_gps):
     # "Watchlist" is what the tab leads with, so a row whose status was
     # downgraded for thin history must not still read as flagged.
     board.loc[board["Status"] != "Watchlist", "On Watchlist"] = False
+
+    # Blank the GPS columns for an excluded player. What survives an exclusion
+    # is her last pre-fault window, and printed beside a threshold built from
+    # the same short history it reads as a large overload -- the stale numbers
+    # mislead exactly as much as the status they sit next to would have.
+    excluded = board["Status"] == "GPS excluded"
+    if excluded.any():
+        gps_columns = [c for c in board.columns
+                       if c.startswith(tuple(LOAD_METRICS)) or c.startswith("GPS ")]
+        for column in gps_columns:
+            if column == "GPS Triggers":
+                board.loc[excluded, column] = board.loc[excluded, column].apply(lambda _: [])
+            else:
+                board.loc[excluded, column] = np.nan
+        board.loc[excluded, "GPS Fatigued"] = False
+    # A rostered player with no usable reading on either side matches nothing to
+    # merge and would otherwise leave no row at all. Emma Blakely is on the CMJ
+    # sheet every test day with the jump columns blank and has never worn a pod,
+    # so she vanished from the board entirely -- the one outcome this tab must
+    # not produce, since an absent player looks identical to a fine one.
+    for player in ROSTER_ORDER:
+        if player not in set(board["Player Name"]):
+            board = pd.concat(
+                [board, pd.DataFrame([{
+                    "Player Name": player,
+                    "Status": "No data",
+                    "CMJ Fatigued": False,
+                    "GPS Fatigued": False,
+                    "On Watchlist": False,
+                }])],
+                ignore_index=True,
+            )
+
     board["Photo"] = board["Player Name"].map(roster.image_path)
 
     return board.sort_values(
