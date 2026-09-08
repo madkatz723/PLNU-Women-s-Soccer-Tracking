@@ -993,15 +993,21 @@ with tab_gps:
         # in a match where nobody ran more than 2.3 km.
         if "Max Velocity" in gps_df.columns and "Player Name" in gps_df.columns:
             speeds = pd.to_numeric(gps_df["Max Velocity"], errors="coerce")
-            impossible = gps_df.loc[speeds > fatigue.IMPLAUSIBLE_VELOCITY, "Player Name"]
-            if not impossible.empty:
-                names = ", ".join(f"**{n}**" for n in sorted(set(impossible)))
+            impossible = speeds > fatigue.IMPLAUSIBLE_VELOCITY
+            if impossible.any():
+                names = ", ".join(
+                    f"**{n}**" for n in sorted(set(gps_df.loc[impossible, "Player Name"]))
+                )
+                # Dropped, not merely flagged. A team average is a statistic, and
+                # one computed over a motorway drive is wrong rather than raw --
+                # Sep 5 read 7.77 km per player against a real median near 1.6.
+                gps_df = gps_df[~impossible]
                 st.warning(
                     f"{names} recorded a peak speed above "
                     f"{fatigue.IMPLAUSIBLE_VELOCITY * 3.6:.0f} km/h in this session — faster "
-                    "than anyone runs, so the pod was most likely left on in a vehicle. Those "
-                    "rows are included in the charts and team averages below, and inflate "
-                    "them. The Fatigue Watchlist excludes them."
+                    "than anyone runs, so the pod was most likely left on in a vehicle. "
+                    f"{int(impossible.sum())} row(s) removed from the charts and team averages "
+                    "below; the Fatigue Watchlist excludes them too."
                 )
 
         with left2:
