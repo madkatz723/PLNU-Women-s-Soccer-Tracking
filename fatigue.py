@@ -82,6 +82,34 @@ EXCLUDED_CAPTURES = [
 ]
 
 
+# Context that changes how a row should be READ without changing how it is
+# scored. Deliberately separate from EXCLUDED_CAPTURES: an exclusion says the
+# numbers are junk, a note says the numbers are real and mean something other
+# than the obvious.
+#
+# A return-to-play ramp trips the GPS half almost by construction. The rolling
+# window is meant to climb week on week, so it sits above the player's own
+# prior 75th percentile for as long as the progression is working -- Kylee
+# Jerome's has risen every window since her first session. Excluding her would
+# be wrong twice over: her pod recorded genuine running, and dropping the ramp
+# would leave her scored on nothing. But an unexplained flag is worse than no
+# flag, because a coach who learns to discount it will also discount the first
+# real one after she comes off the ramp.
+#
+# Same shape as EXCLUDED_CAPTURES: `player` may name one athlete or several,
+# `end` is None while the note still applies, dates inclusive.
+PLAYER_NOTES = [
+    {
+        "player": "Kylee Jerome",
+        # Her first capture of the season; every window since has been part of
+        # the ramp. Narrow this if the RTP block actually began later.
+        "start": "2026-08-27",
+        "end": None,
+        "note": "Returning to play \u2014 rising load is a planned ramp",
+    },
+]
+
+
 # A top speed no footballer reaches. The squad's own season high is about
 # 7.3 m/s and a world-class sprinter peaks near 12, so anything past this did
 # not come from someone running. The Sep 5 travel rows read 34 m/s.
@@ -134,16 +162,16 @@ def _excluded_mask(df):
     return mask
 
 
-def active_exclusion(player, as_of=None):
-    """The reason a player's GPS is being ignored as of `as_of`, or None.
+def _active_rule(rules, player, as_of=None):
+    """First rule in `rules` covering `player` at `as_of`, or None.
 
-    Used to label her on the board rather than leaving her to be scored on
-    whatever partial history survives the exclusion -- a stale window is no
-    more meaningful than the bad one it replaced.
+    EXCLUDED_CAPTURES and PLAYER_NOTES are matched identically and differ only
+    in which field the caller reads off the match, so the date-and-name walk
+    lives here once.
     """
     canonical = roster.resolve(player) or player
     as_of = pd.to_datetime(as_of) if as_of is not None else None
-    for rule in EXCLUDED_CAPTURES:
+    for rule in rules:
         if canonical not in _rule_players(rule):
             continue
         start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
@@ -153,8 +181,28 @@ def active_exclusion(player, as_of=None):
                 continue
             if end is not None and as_of > end:
                 continue
-        return rule.get("reason", "excluded capture")
+        return rule
     return None
+
+
+def active_exclusion(player, as_of=None):
+    """The reason a player's GPS is being ignored as of `as_of`, or None.
+
+    Used to label her on the board rather than leaving her to be scored on
+    whatever partial history survives the exclusion -- a stale window is no
+    more meaningful than the bad one it replaced.
+    """
+    rule = _active_rule(EXCLUDED_CAPTURES, player, as_of)
+    return rule.get("reason", "excluded capture") if rule else None
+
+
+def active_note(player, as_of=None):
+    """The note that should ride along with a player's row as of `as_of`, or
+    None. Annotation only -- nothing here reaches the scoring, so a noted
+    player is flagged or cleared on exactly the numbers she would have been
+    without one."""
+    rule = _active_rule(PLAYER_NOTES, player, as_of)
+    return rule.get("note") if rule else None
 
 
 def prepare_gps(frames):
@@ -338,6 +386,7 @@ def build_board(cmj_df, daily_gps):
         board["GPS Fatigued"] = board.get("GPS Fatigued", False)
         board["On Watchlist"] = False
         board["Status"] = "No CMJ data" if cmj.empty else "No GPS data"
+        board["Note"] = board["Player Name"].map(lambda p: active_note(p) or "")
         board["Photo"] = board["Player Name"].map(roster.image_path)
         return board.reset_index(drop=True)
 
@@ -414,6 +463,8 @@ def build_board(cmj_df, daily_gps):
                 ignore_index=True,
             )
 
+    # Context for reading a row, not an input to it (see PLAYER_NOTES).
+    board["Note"] = board["Player Name"].map(lambda p: active_note(p, as_of) or "")
     board["Photo"] = board["Player Name"].map(roster.image_path)
 
     return board.sort_values(

@@ -248,6 +248,15 @@ st.markdown(
             font-weight: 600;
             white-space: nowrap;
         }}
+        .fatigue-note {{
+            margin-top: 8px;
+            padding-top: 7px;
+            border-top: 1px dashed #d9dee5;
+            color: #5b6672;
+            font-size: 0.72rem;
+            line-height: 1.35;
+            font-style: italic;
+        }}
 
         /* ---------------------------------------------------------------
            Tabs \u2014 white nav-bar style with gold underline on active
@@ -1346,6 +1355,14 @@ with tab_fatigue:
                         if pd.notna(row.get("CMJ Baseline")) and row["CMJ Baseline"]:
                             cmj_pct = (row["CMJ Latest"] / row["CMJ Baseline"] - 1) * 100
 
+                        # Why this player's flag looks the way it does, on the
+                        # card itself: a caveat filed elsewhere gets read as
+                        # "ignore her", which is the opposite of the point.
+                        note = row.get("Note") or ""
+                        note_html = (
+                            f'<div class="fatigue-note">{note}</div>' if note else ""
+                        )
+
                         st.markdown(
                             f"""
                             <div class="fatigue-card">
@@ -1361,6 +1378,7 @@ with tab_fatigue:
                                 {''.join(f'<span class="fatigue-tag">{d}</span>' for d in load_deltas)
                                  or '<span class="fatigue-tag">Elevated load</span>'}
                               </div>
+                              {note_html}
                             </div>
                             """,
                             unsafe_allow_html=True,
@@ -1374,7 +1392,7 @@ with tab_fatigue:
         )
         st.dataframe(
             display[[
-                "Player Name", "Status", "CMJ Latest", "CMJ Threshold", "CMJ Tests",
+                "Player Name", "Status", "Note", "CMJ Latest", "CMJ Threshold", "CMJ Tests",
                 "Player Load Current", "Player Load Threshold",
                 "HI + Sprint Distance Current", "HI + Sprint Distance Threshold",
                 "GPS Triggers",
@@ -1390,7 +1408,9 @@ with tab_fatigue:
             "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
             "export, so they can never reach the watchlist. *GPS excluded* = a known-bad "
             "capture, ignored on purpose. *No data* = rostered but no usable reading on "
-            "either side all season."
+            "either side all season. *Note* = context that changes how a row reads "
+            "without changing how it is scored \u2014 a noted player is flagged or "
+            "cleared on exactly the same numbers as anyone else."
         )
         # Stated from the data rather than hardcoded: this was true during the
         # August ramp and stopped being true once volume levelled off, and a
