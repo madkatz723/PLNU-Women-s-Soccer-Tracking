@@ -101,9 +101,9 @@ EXCLUDED_CAPTURES = [
 PLAYER_NOTES = [
     {
         "player": "Kylee Jerome",
-        # Her first capture of the season; every window since has been part of
-        # the ramp. Narrow this if the RTP block actually began later.
-        "start": "2026-08-27",
+        # When the RTP block began. Her first pod capture came three days
+        # later, on Aug 27, so every GPS window she has is inside the ramp.
+        "start": "2026-08-24",
         "end": None,
         "note": "Returning to play \u2014 rising load is a planned ramp",
     },
