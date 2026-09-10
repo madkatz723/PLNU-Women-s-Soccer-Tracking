@@ -1392,7 +1392,8 @@ with tab_fatigue:
         )
         st.dataframe(
             display[[
-                "Player Name", "Status", "Note", "CMJ Latest", "CMJ Threshold", "CMJ Tests",
+                "Player Name", "Status", "Note", "CMJ Latest", "CMJ Threshold",
+                "CMJ Drop", "CMJ Tests",
                 "Player Load Current", "Player Load Threshold",
                 "HI + Sprint Distance Current", "HI + Sprint Distance Threshold",
                 "GPS Triggers",
@@ -1400,6 +1401,8 @@ with tab_fatigue:
             width="stretch",
             hide_index=True,
         )
+        detectable = board["CMJ Detectable"].dropna()
+        detectable = float(detectable.iloc[0]) if len(detectable) else fatigue.CMJ_NOISE_FALLBACK
         st.caption(
             f"**Reading the board.** *Watchlist* = both signals. *Load only* / *CMJ only* = one "
             f"signal, worth watching but not acted on. *Not enough history* = fewer than "
@@ -1408,7 +1411,10 @@ with tab_fatigue:
             "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
             "export, so they can never reach the watchlist. *GPS excluded* = a known-bad "
             "capture, ignored on purpose. *No data* = rostered but no usable reading on "
-            "either side all season. *Note* = context that changes how a row reads "
+            "either side all season. A CMJ flag also needs the drop to beat the test's "
+            f"own noise \u2014 two trials per test put that at **{detectable:.2f} cm** on this "
+            "season's data, and a smaller dip cannot be told from measurement error. "
+            "*Note* = context that changes how a row reads "
             "without changing how it is scored \u2014 a noted player is flagged or "
             "cleared on exactly the same numbers as anyone else."
         )

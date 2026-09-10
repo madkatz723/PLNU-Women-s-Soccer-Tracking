@@ -40,6 +40,18 @@ PERCENTILE = 0.75
 # clearing her -- an empty history should never read as "clear".
 MIN_HISTORY = 4
 
+# A drop has to clear the protocol's own measurement noise before it means
+# anything. The quartile rule alone flags the bottom 25% of a player's own
+# season by construction: someone is always in it, whether or not she changed.
+# On the season to Sep 8 it fired on eleven players, eight of whom had dropped
+# less than the jump test can actually resolve.
+#
+# Two trials are recorded per test, so the noise is measurable rather than
+# assumed -- see cmj_detectable_change(). This constant is only the fallback
+# for a sheet that arrives with the trial columns already averaged away.
+# Measured over the 242 paired trials to Sep 8 it comes out at 0.77 cm.
+CMJ_NOISE_FALLBACK = 0.77
+
 # Captures known to be invalid, dropped before anything is scored.
 #
 # A dead pod does not read as missing data, it reads as a very easy week, and
@@ -287,11 +299,36 @@ def rolling_load(daily, window_days=WINDOW_DAYS):
     return out
 
 
+def cmj_detectable_change(cmj_df, fallback=CMJ_NOISE_FALLBACK):
+    """Smallest jump change distinguishable from measurement noise, in cm.
+
+    Derived from the squad's own repeat trials rather than a literature value,
+    so it tracks this protocol on this equipment: the spread of the two trials
+    within a test gives the typical error of one trial, the average of two is
+    sqrt(2) tighter than that, and 1.96 * sqrt(2) * TE is the change that
+    clears it at 95%. Falls back to the documented constant when a sheet has
+    no trial columns to measure.
+    """
+    if cmj_df is None or "CMJ 1" not in cmj_df.columns or "CMJ 2" not in cmj_df.columns:
+        return fallback
+    pairs = cmj_df[["CMJ 1", "CMJ 2"]].dropna()
+    if len(pairs) < 30:
+        # Too few repeats to estimate a spread worth trusting.
+        return fallback
+    typical_error = (pairs["CMJ 1"] - pairs["CMJ 2"]).std() / np.sqrt(2)
+    return float(1.96 * np.sqrt(2) * (typical_error / np.sqrt(2)))
+
+
 def cmj_state(cmj_df, percentile=PERCENTILE):
     """Per player: is her most recent CMJ in the bottom quartile of her own
-    season? Uses the whole season as the reference distribution, including the
-    latest test -- with a short season, excluding it would leave too little to
-    take a quantile over."""
+    season AND down by more than the test can resolve? Uses the whole season as
+    the reference distribution, including the latest test -- with a short
+    season, excluding it would leave too little to take a quantile over.
+
+    Both conditions are needed. The quartile alone is relative, so it always
+    names somebody; the noise floor alone is absolute, so it would fire on a
+    player whose jump is merely low today. Together they mean "low for her, by
+    an amount the equipment can actually see" (see cmj_detectable_change)."""
     if cmj_df is None or cmj_df.empty:
         return pd.DataFrame()
     if "Average" not in cmj_df.columns or "Date" not in cmj_df.columns:
@@ -300,6 +337,11 @@ def cmj_state(cmj_df, percentile=PERCENTILE):
     df = cmj_df.dropna(subset=["Average", "Date"]).copy()
     df["Player Name"] = roster.canonicalize(df["Player Name"].astype(str).str.strip())
 
+    # Measured across the whole sheet, not per player: one athlete's handful of
+    # repeats is far too few to estimate her own noise, and the error belongs to
+    # the protocol rather than to her.
+    detectable = cmj_detectable_change(cmj_df)
+
     rows = []
     for player, group in df.groupby("Player Name"):
         group = group.sort_values("Date", kind="stable")
@@ -307,17 +349,24 @@ def cmj_state(cmj_df, percentile=PERCENTILE):
         history = group["Average"].to_numpy(dtype=float)
         history = history[~np.isnan(history)]
         threshold = np.quantile(history, 1 - percentile) if len(history) else np.nan
+        baseline = float(np.median(history)) if len(history) else np.nan
+        drop = baseline - float(latest["Average"]) if len(history) else np.nan
         z = latest.get("Z-Score", np.nan)
         rows.append({
             "Player Name": player,
             "CMJ Latest": float(latest["Average"]),
             "CMJ Date": latest["Date"],
             "CMJ Threshold": threshold,
-            "CMJ Baseline": float(np.median(history)) if len(history) else np.nan,
+            "CMJ Baseline": baseline,
+            "CMJ Drop": drop,
+            "CMJ Detectable": detectable,
             "CMJ Z-Score": float(z) if pd.notna(z) else np.nan,
             "CMJ Tests": int(len(history)),
             "CMJ Fatigued": bool(
-                len(history) >= MIN_HISTORY and latest["Average"] <= threshold
+                len(history) >= MIN_HISTORY
+                and latest["Average"] <= threshold
+                and pd.notna(drop)
+                and drop > detectable
             ),
         })
     return pd.DataFrame(rows)
