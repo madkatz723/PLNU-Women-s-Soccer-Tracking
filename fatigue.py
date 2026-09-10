@@ -49,8 +49,15 @@ MIN_HISTORY = 4
 # Two trials are recorded per test, so the noise is measurable rather than
 # assumed -- see cmj_detectable_change(). This constant is only the fallback
 # for a sheet that arrives with the trial columns already averaged away.
-# Measured over the 242 paired trials to Sep 8 it comes out at 0.77 cm.
-CMJ_NOISE_FALLBACK = 0.77
+# Measured over the 242 paired trials to Sep 8 it comes out at 0.65 cm.
+CMJ_NOISE_FALLBACK = 0.65
+
+# One-sided, because the only question ever asked of a jump here is "is she
+# LOWER than her baseline", never "is she different from it". A two-sided
+# 1.96 prices the wrong question and costs about 0.12 cm of sensitivity for
+# nothing -- on the season to Sep 8 that was the difference between catching
+# Riley Johnson's 0.65 cm drop and missing it.
+CMJ_NOISE_Z = 1.645
 
 # Captures known to be invalid, dropped before anything is scored.
 #
@@ -305,9 +312,9 @@ def cmj_detectable_change(cmj_df, fallback=CMJ_NOISE_FALLBACK):
     Derived from the squad's own repeat trials rather than a literature value,
     so it tracks this protocol on this equipment: the spread of the two trials
     within a test gives the typical error of one trial, the average of two is
-    sqrt(2) tighter than that, and 1.96 * sqrt(2) * TE is the change that
-    clears it at 95%. Falls back to the documented constant when a sheet has
-    no trial columns to measure.
+    sqrt(2) tighter than that, and CMJ_NOISE_Z * sqrt(2) * TE is the drop that
+    clears it at 95% one-sided. Falls back to the documented constant when a
+    sheet has no trial columns to measure.
     """
     if cmj_df is None or "CMJ 1" not in cmj_df.columns or "CMJ 2" not in cmj_df.columns:
         return fallback
@@ -316,7 +323,7 @@ def cmj_detectable_change(cmj_df, fallback=CMJ_NOISE_FALLBACK):
         # Too few repeats to estimate a spread worth trusting.
         return fallback
     typical_error = (pairs["CMJ 1"] - pairs["CMJ 2"]).std() / np.sqrt(2)
-    return float(1.96 * np.sqrt(2) * (typical_error / np.sqrt(2)))
+    return float(CMJ_NOISE_Z * np.sqrt(2) * (typical_error / np.sqrt(2)))
 
 
 def cmj_state(cmj_df, percentile=PERCENTILE):
