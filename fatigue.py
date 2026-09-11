@@ -114,19 +114,9 @@ EXCLUDED_CAPTURES = [
 # lose the recorded minutes as well as the missing ones.
 #
 # Same shape as EXCLUDED_CAPTURES, except `player` may also be None for a
-# capture that stopped for the whole squad at once.
-PARTIAL_CAPTURES = [
-    {
-        # Recording stopped about 28 minutes into the match, so the export is
-        # warm-up plus the opening spell. Starters read 390-465 Player Load
-        # against 1,300-1,500 in a full match; substitutes, who mostly come on
-        # later, have little beyond their warm-up.
-        "player": None,
-        "start": "2026-09-10",
-        "end": "2026-09-10",
-        "reason": "Sep 10 match vs LA recorded only through the first 28 minutes",
-    },
-]
+# capture that stopped for the whole squad at once. Remove an entry once the
+# full export replaces the partial one, as the Sep 10 LA match's did.
+PARTIAL_CAPTURES = []
 
 
 # Context that changes how a row should be READ without changing how it is
@@ -623,7 +613,7 @@ def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
     the day it was written.
 
     Partial windows are left out, and so is any date where they are most of
-    the squad: the Sep 10 capture alone would otherwise have read as load
+    the squad: the partial Sep 10 capture alone would otherwise have read as load
     falling from 38% to 52% off peak, when all that fell was the recording.
     The trend then ends at the last date it can speak for.
     """

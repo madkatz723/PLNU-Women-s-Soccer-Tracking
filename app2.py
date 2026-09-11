@@ -443,8 +443,7 @@ GPS_LIBRARY = {
     ],
     "Practice \u2014 Sep 8": "ctr-report-9_8_2026-practice.csv",
     "Practice \u2014 Sep 9": "ctr-report-9_9_2026-practice.csv",
-    # Warm-up plus the first ~28 minutes only (see fatigue.PARTIAL_CAPTURES).
-    "Match \u2014 Sep 10 (vs LA, partial)": "ctr-report-9_10_2026-LA-warmup to first 28mins.csv",
+    "Match \u2014 Sep 10 (vs LA)": "ctr-report-9_10_2026-LA.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -466,7 +465,7 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Sep 7": "Monday, September 07 2026",
     "Practice \u2014 Sep 8": "Tuesday, September 08 2026",
     "Practice \u2014 Sep 9": "Wednesday, September 09 2026",
-    "Match \u2014 Sep 10 (vs LA, partial)": "Thursday, September 10 2026",
+    "Match \u2014 Sep 10 (vs LA)": "Thursday, September 10 2026",
 }
 
 
