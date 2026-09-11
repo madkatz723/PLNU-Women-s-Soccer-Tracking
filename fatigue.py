@@ -101,6 +101,34 @@ EXCLUDED_CAPTURES = [
 ]
 
 
+# Captures that are real but stop short of the session they belong to.
+# Distinct from EXCLUDED_CAPTURES: an exclusion says the numbers are junk, a
+# partial capture says they are a true lower bound. That makes them useful in
+# one direction only -- a window already over a player's threshold on what was
+# recorded is over it for certain, so it may still flag her; a window under it
+# says nothing, so it may not clear her. Partial windows are also kept out of
+# every reference distribution, since a threshold built from understated weeks
+# would lower the bar for the rest of the season.
+#
+# Dropping the day instead would be worse, not safer: the window would then
+# lose the recorded minutes as well as the missing ones.
+#
+# Same shape as EXCLUDED_CAPTURES, except `player` may also be None for a
+# capture that stopped for the whole squad at once.
+PARTIAL_CAPTURES = [
+    {
+        # Recording stopped about 28 minutes into the match, so the export is
+        # warm-up plus the opening spell. Starters read 390-465 Player Load
+        # against 1,300-1,500 in a full match; substitutes, who mostly come on
+        # later, have little beyond their warm-up.
+        "player": None,
+        "start": "2026-09-10",
+        "end": "2026-09-10",
+        "reason": "Sep 10 match vs LA recorded only through the first 28 minutes",
+    },
+]
+
+
 # Context that changes how a row should be READ without changing how it is
 # scored. Deliberately separate from EXCLUDED_CAPTURES: an exclusion says the
 # numbers are junk, a note says the numbers are real and mean something other
@@ -156,21 +184,25 @@ def suspect_captures(daily, limit=IMPLAUSIBLE_VELOCITY):
 def _rule_players(rule):
     """Canonical names an exclusion rule covers. `player` may be one name or a
     list, resolved through the roster so a rule holds however an export spelled
-    the athlete."""
-    named = rule["player"]
+    the athlete. None means the rule covers everyone."""
+    named = rule.get("player")
+    if named is None:
+        return None
     if isinstance(named, str):
         named = [named]
     return [roster.resolve(name) or name for name in named]
 
 
-def _excluded_mask(df):
-    """Rows covered by an EXCLUDED_CAPTURES entry, matched on canonical name so
-    an exclusion holds however the export spelled the player."""
+def _rule_mask(df, rules):
+    """Rows covered by any entry in `rules`, matched on canonical name so a
+    rule holds however the export spelled the player."""
     mask = pd.Series(False, index=df.index)
     if df.empty:
         return mask
-    for rule in EXCLUDED_CAPTURES:
-        covered = df["Player Name"].isin(_rule_players(rule))
+    for rule in rules:
+        players = _rule_players(rule)
+        covered = (df["Player Name"].isin(players) if players is not None
+                   else pd.Series(True, index=df.index))
         start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
         end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
         if start is not None:
@@ -191,7 +223,8 @@ def _active_rule(rules, player, as_of=None):
     canonical = roster.resolve(player) or player
     as_of = pd.to_datetime(as_of) if as_of is not None else None
     for rule in rules:
-        if canonical not in _rule_players(rule):
+        players = _rule_players(rule)
+        if players is not None and canonical not in players:
             continue
         start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
         end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
@@ -222,6 +255,23 @@ def active_note(player, as_of=None):
     without one."""
     rule = _active_rule(PLAYER_NOTES, player, as_of)
     return rule.get("note") if rule else None
+
+
+def partial_captures_between(start, end):
+    """PARTIAL_CAPTURES entries whose dates overlap `start`..`end` inclusive,
+    for naming the cause wherever a partial capture changes what a reader sees.
+    """
+    start, end = pd.to_datetime(start), pd.to_datetime(end)
+    found = []
+    for rule in PARTIAL_CAPTURES:
+        rule_start = pd.to_datetime(rule.get("start")) if rule.get("start") else None
+        rule_end = pd.to_datetime(rule.get("end")) if rule.get("end") else None
+        if rule_start is not None and rule_start > end:
+            continue
+        if rule_end is not None and rule_end < start:
+            continue
+        found.append(rule)
+    return found
 
 
 def prepare_gps(frames):
@@ -262,9 +312,12 @@ def prepare_gps(frames):
     # Carried through so a capture can be sanity-checked after the fact; a peak
     # speed is a property of the day, not something to add up.
     agg["Max Velocity"] = "max"
+    # A day is a lower bound if any part of it is.
+    agg["Partial"] = "max"
     # Drop known-bad captures before any aggregation, so they reach neither a
     # player's current window nor the distribution it is compared against.
-    df = df[~_excluded_mask(df)]
+    df = df[~_rule_mask(df, EXCLUDED_CAPTURES)]
+    df = df.assign(Partial=_rule_mask(df, PARTIAL_CAPTURES))
 
     daily = df.groupby(["Player Name", "Date"], as_index=False).agg(agg)
     return daily.sort_values(["Player Name", "Date"], kind="stable").reset_index(drop=True)
@@ -281,10 +334,14 @@ def rolling_load(daily, window_days=WINDOW_DAYS):
     for metric in LOAD_METRICS:
         out[f"{metric} ({window_days}d)"] = np.nan
     out["Window Complete"] = False
+    out["Window Partial"] = False
+    partial_days = (out["Partial"].eq(True) if "Partial" in out.columns
+                    else pd.Series(False, index=out.index))
 
     for _, idx in out.groupby("Player Name").groups.items():
         idx = list(idx)
         dates = out.loc[idx, "Date"].to_numpy()
+        partial = partial_days.loc[idx].to_numpy(dtype=bool)
         first_seen = dates[0]
         for metric in LOAD_METRICS:
             values = out.loc[idx, metric].to_numpy(dtype=float)
@@ -303,6 +360,11 @@ def rolling_load(daily, window_days=WINDOW_DAYS):
         for pos, row_idx in enumerate(idx):
             span = (dates[pos] - first_seen) / np.timedelta64(1, "D")
             out.at[row_idx, "Window Complete"] = span >= window_days - 1
+            # A window holding any partial day is a lower bound on the week
+            # (see PARTIAL_CAPTURES).
+            cutoff = dates[pos] - np.timedelta64(window_days - 1, "D")
+            in_window = dates[: pos + 1] >= cutoff
+            out.at[row_idx, "Window Partial"] = bool(partial[: pos + 1][in_window].any())
     return out
 
 
@@ -383,7 +445,11 @@ def gps_state(daily, window_days=WINDOW_DAYS, percentile=PERCENTILE):
     """Per player: is her current rolling load above her own historical 75th
     percentile on either metric? The percentile is taken over that player's
     PRIOR windows only, so today's spike cannot inflate the bar it is being
-    measured against."""
+    measured against.
+
+    A current window holding a partial capture still flags when it is over the
+    bar -- the recorded load alone clears it -- and reports "GPS Partial" so the
+    board does not read the opposite outcome as clear."""
     if daily.empty:
         return pd.DataFrame()
 
@@ -397,13 +463,17 @@ def gps_state(daily, window_days=WINDOW_DAYS, percentile=PERCENTILE):
             "GPS Date": latest["Date"],
             "GPS Sessions": int(len(group)),
         }
-        # Only fully-populated windows form the reference distribution.
+        # Only fully-populated, fully-recorded windows form the reference
+        # distribution.
         complete = group["Window Complete"].to_numpy(dtype=bool)
+        partial = group["Window Partial"].to_numpy(dtype=bool)
+        reference = complete & ~partial
+        record["GPS Partial"] = bool(partial[-1])
         triggers, prior_counts = [], []
         for metric in LOAD_METRICS:
             series = group[f"{metric} ({window_days}d)"].to_numpy(dtype=float)
             current = series[-1]
-            prior = series[:-1][complete[:-1]]
+            prior = series[:-1][reference[:-1]]
             prior = prior[~np.isnan(prior)]
             threshold = np.quantile(prior, percentile) if len(prior) else np.nan
             record[f"{metric} Current"] = current
@@ -452,6 +522,7 @@ def build_board(cmj_df, daily_gps):
     # a real bool column in one step, with a missing flag reading as not-flagged.
     board["CMJ Fatigued"] = board["CMJ Fatigued"].eq(True)
     board["GPS Fatigued"] = board["GPS Fatigued"].eq(True)
+    board["GPS Partial"] = board["GPS Partial"].eq(True)
     board["On Watchlist"] = board["CMJ Fatigued"] & board["GPS Fatigued"]
 
     # Latest session in the data, used to ask whether an exclusion is still open.
@@ -474,6 +545,10 @@ def build_board(cmj_df, daily_gps):
             return "CMJ only"
         if row["GPS Fatigued"]:
             return "Load only"
+        # Under her bar on a window that is missing part of a session is not
+        # evidence she is under it (see PARTIAL_CAPTURES).
+        if row["GPS Partial"]:
+            return "Load understated"
         return "Clear"
 
     board["Status"] = board.apply(status, axis=1)
@@ -514,13 +589,23 @@ def build_board(cmj_df, daily_gps):
                     "Status": "No data",
                     "CMJ Fatigued": False,
                     "GPS Fatigued": False,
+                    "GPS Partial": False,
                     "On Watchlist": False,
                 }])],
                 ignore_index=True,
             )
 
-    # Context for reading a row, not an input to it (see PLAYER_NOTES).
-    board["Note"] = board["Player Name"].map(lambda p: active_note(p, as_of) or "")
+    # Context for reading a row, not an input to it (see PLAYER_NOTES). A
+    # partial window rides along too, so a flag or a "CMJ only" built on one
+    # says so on the row -- a CMJ-only player there may be a watchlist player
+    # whose load went unrecorded.
+    def note(row):
+        notes = [active_note(row["Player Name"], as_of)]
+        if row.get("GPS Partial", False):
+            notes.append("Load window missing part of a session")
+        return " \u00b7 ".join(n for n in notes if n)
+
+    board["Note"] = board.apply(note, axis=1)
     board["Photo"] = board["Player Name"].map(roster.image_path)
 
     return board.sort_values(
@@ -536,11 +621,21 @@ def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
     preseason, misleading once volume plateaus. Reporting the trend from the
     data keeps the tab's caveat honest instead of freezing whatever was true
     the day it was written.
+
+    Partial windows are left out, and so is any date where they are most of
+    the squad: the Sep 10 capture alone would otherwise have read as load
+    falling from 38% to 52% off peak, when all that fell was the recording.
+    The trend then ends at the last date it can speak for.
     """
     if daily.empty:
         return pd.Series(dtype=float)
     rolled = rolling_load(daily, window_days)
     rolled = rolled[rolled["Window Complete"]]
+    if rolled.empty:
+        return pd.Series(dtype=float)
+    recorded_share = (~rolled["Window Partial"]).groupby(rolled["Date"]).mean()
+    usable_dates = recorded_share.index[recorded_share >= 0.5]
+    rolled = rolled[~rolled["Window Partial"] & rolled["Date"].isin(usable_dates)]
     if rolled.empty:
         return pd.Series(dtype=float)
     return rolled.groupby("Date")[f"{metric} ({window_days}d)"].median().sort_index()

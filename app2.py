@@ -443,6 +443,8 @@ GPS_LIBRARY = {
     ],
     "Practice \u2014 Sep 8": "ctr-report-9_8_2026-practice.csv",
     "Practice \u2014 Sep 9": "ctr-report-9_9_2026-practice.csv",
+    # Warm-up plus the first ~28 minutes only (see fatigue.PARTIAL_CAPTURES).
+    "Match \u2014 Sep 10 (vs LA, partial)": "ctr-report-9_10_2026-LA-warmup to first 28mins.csv",
 }
 
 # Display label used in GPS chart titles ("Distance - <label>"), matching the
@@ -464,6 +466,7 @@ GPS_SESSION_LABELS = {
     "Practice \u2014 Sep 7": "Monday, September 07 2026",
     "Practice \u2014 Sep 8": "Tuesday, September 08 2026",
     "Practice \u2014 Sep 9": "Wednesday, September 09 2026",
+    "Match \u2014 Sep 10 (vs LA, partial)": "Thursday, September 10 2026",
 }
 
 
@@ -1000,6 +1003,21 @@ with tab_gps:
         else:
             session_label = "Uploaded Session"
 
+        # A partial capture looks like a light day in every chart below, which
+        # is exactly the misreading it has to be kept from.
+        session_date = pd.to_datetime(session_label, errors="coerce")
+        if pd.notna(session_date):
+            for rule in fatigue.partial_captures_between(session_date, session_date):
+                named = rule.get("player")
+                who = (
+                    "" if named is None
+                    else " for " + (named if isinstance(named, str) else ", ".join(named))
+                )
+                st.warning(
+                    f"Partial capture{who}: {rule['reason']}. Totals and team averages "
+                    "below cover only what was recorded, not the whole session."
+                )
+
         # This tab deliberately shows the export as it came, exclusions and all,
         # so a capture recorded from a moving vehicle would otherwise sit in the
         # team averages unannounced -- the Sep 5 trip to CPP put five 27 km rows
@@ -1308,6 +1326,34 @@ with tab_fatigue:
                 "Clear the entry in `fatigue.EXCLUDED_CAPTURES` once the capture is good again."
             )
 
+        # A partial capture can flag but not clear, so the rows it touches read
+        # differently for a week. Say why, and when it stops.
+        partial_rows = board[board.get("GPS Partial", pd.Series(False, index=board.index)).eq(True)]
+        if not partial_rows.empty:
+            n = len(partial_rows)
+            as_of = board["GPS Date"].max()
+            window_start = as_of - pd.Timedelta(days=fatigue.WINDOW_DAYS - 1)
+            rules = fatigue.partial_captures_between(window_start, as_of)
+            reasons = "; ".join(rule["reason"] for rule in rules) or "a session was only partly recorded"
+            last_end = max(
+                (pd.to_datetime(rule["end"]) for rule in rules if rule.get("end")),
+                default=None,
+            )
+            clears = (
+                f" This lifts on its own once the window moves past it, from "
+                f"{last_end + pd.Timedelta(days=fatigue.WINDOW_DAYS):%b %d}."
+                if last_end is not None else ""
+            )
+            st.warning(
+                f"**Load understated for {n} player{'s' if n != 1 else ''}** — {reasons}. "
+                f"Their {fatigue.WINDOW_DAYS}-day windows are a lower bound, so they can "
+                "still be flagged (recorded load alone is over the bar) but not cleared: "
+                "those rows read *Load understated* instead of *Clear*, and a *CMJ only* "
+                "player among them could be a watchlist player whose load went unrecorded. "
+                "The windows are also kept out of everyone's thresholds so they do not "
+                f"lower the bar for later weeks.{clears}"
+            )
+
         # Anything left after the exclusions that no runner could have produced.
         suspect = fatigue.suspect_captures(fatigue_gps)
         if not suspect.empty:
@@ -1412,13 +1458,17 @@ with tab_fatigue:
             "a personal percentile is not yet meaningful \u2014 these players are neither "
             "flagged nor cleared. *No GPS data* = on the CMJ sheet but never in a Catapult "
             "export, so they can never reach the watchlist. *GPS excluded* = a known-bad "
-            "capture, ignored on purpose. *No data* = rostered but no usable reading on "
+            "capture, ignored on purpose. *Load understated* = not flagged, but the load "
+            "window is missing part of a session, so it cannot clear her either. "
+            "*No data* = rostered but no usable reading on "
             "either side all season. A CMJ flag also needs the drop to beat the test's "
             f"own noise \u2014 two trials per test put that at **{detectable:.2f} cm** on this "
             "season's data, and a smaller dip cannot be told from measurement error. "
             "*Note* = context that changes how a row reads "
             "without changing how it is scored \u2014 a noted player is flagged or "
-            "cleared on exactly the same numbers as anyone else."
+            "cleared on exactly the same numbers as anyone else. The exception is "
+            "*Load window missing part of a session*, which marks a lower-bound window "
+            "and is why such a row reads *Load understated* rather than *Clear*."
         )
         # Stated from the data rather than hardcoded: this was true during the
         # August ramp and stopped being true once volume levelled off, and a
@@ -1426,13 +1476,21 @@ with tab_fatigue:
         phase = fatigue.load_phase(fatigue_gps)
         trend = fatigue.squad_load_trend(fatigue_gps)
         off_peak = (trend.iloc[-1] / trend.max() - 1) * 100 if len(trend) else 0
+        # The trend skips windows holding a partial capture, so it can end
+        # before the board does. "Now" should not quietly mean last week.
+        stale_note = ""
+        if len(trend) and trend.index[-1] < fatigue_gps["Date"].max():
+            stale_note = (
+                f" Figures run to {trend.index[-1]:%b %d}; the windows since then are "
+                "missing part of a session."
+            )
         if phase == "ramping":
             st.info(
                 "**Squad load is still ramping.** Median 7-day Player Load has climbed from "
                 f"{trend.iloc[0]:,.0f} to {trend.iloc[-1]:,.0f} across the season so far, so "
                 "most players sit near a season high by construction and the load half of the "
                 "test flags widely. The CMJ half is doing the real discriminating work until "
-                "volume plateaus."
+                f"volume plateaus.{stale_note}"
             )
         elif phase == "deload":
             st.info(
@@ -1441,12 +1499,13 @@ with tab_fatigue:
                 "peak). Almost nobody can clear their own 75th percentile on a week this light, "
                 "so a short watchlist reflects the lighter week rather than a squad that has "
                 "recovered \u2014 read the CMJ column on its own until load builds back."
+                f"{stale_note}"
             )
         elif phase == "steady":
             st.caption(
                 f"Squad load is steady \u2014 median 7-day Player Load peaked at {trend.max():,.0f} "
                 f"and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off peak), so both "
-                "halves of the test are discriminating normally."
+                f"halves of the test are discriminating normally.{stale_note}"
             )
 
 
