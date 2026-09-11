@@ -98,6 +98,15 @@ EXCLUDED_CAPTURES = [
         "end": "2026-09-05",
         "reason": "pod left running during travel to CPP",
     },
+    {
+        # Did not play against LA. Her pod shows a 745 m walk-through while the
+        # others warmed up, never faster than 3.25 m/s, then 4 m over the last
+        # 2.4 hours -- not a session, so not scored as one.
+        "player": "Kaleia Coughlin",
+        "start": "2026-09-10",
+        "end": "2026-09-10",
+        "reason": "did not play vs LA",
+    },
 ]
 
 
