@@ -1496,14 +1496,33 @@ with tab_fatigue:
                 f"volume plateaus.{stale_note}"
             )
         elif phase == "deload":
-            st.info(
-                "**Squad load has dropped sharply.** Median 7-day Player Load peaked at "
+            # "Almost nobody can clear their threshold" is a prediction, and the
+            # board can check it. After the Sep 10-12 double-header ten players
+            # were over their own load while the squad median still sat 27% off
+            # peak, and a caption calling that a short watchlist would have
+            # talked a coach out of ten real flags.
+            load_scored = board["Status"].isin(
+                ["Watchlist", "Load only", "CMJ only", "Clear", "Load understated"]
+            ).sum()
+            load_flagged = board["Status"].isin(["Watchlist", "Load only"]).sum()
+            level = (
+                "**Squad load is well below its peak.** Median 7-day Player Load peaked at "
                 f"{trend.max():,.0f} and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off "
-                "peak). Almost nobody can clear their own 75th percentile on a week this light, "
-                "so a short watchlist reflects the lighter week rather than a squad that has "
-                "recovered \u2014 read the CMJ column on its own until load builds back."
-                f"{stale_note}"
+                "peak)."
             )
+            if load_flagged <= max(1, round(0.2 * load_scored)):
+                st.info(
+                    f"{level} Almost nobody can clear their own 75th percentile on a week this "
+                    "light, so a short watchlist reflects the lighter week rather than a squad "
+                    "that has recovered \u2014 read the CMJ column on its own until load builds "
+                    f"back.{stale_note}"
+                )
+            else:
+                st.info(
+                    f"{level} The median does not describe everyone, though: **{load_flagged} of "
+                    f"{load_scored}** players are over their own 75th percentile, so treat their "
+                    f"load flags as real rather than discounting them for a light week.{stale_note}"
+                )
         elif phase == "steady":
             st.caption(
                 f"Squad load is steady \u2014 median 7-day Player Load peaked at {trend.max():,.0f} "
