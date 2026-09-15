@@ -107,6 +107,21 @@ EXCLUDED_CAPTURES = [
         "end": "2026-09-10",
         "reason": "did not play vs LA",
     },
+    {
+        # Coaches report 35 minutes against CSUSM, but the pod assigned to her
+        # read 9.3 km, 1,178 Player Load and 7.62 m/s -- season highs, the top
+        # speed past her previous best. Unused substitutes read about 1.8 km
+        # that day, so she would have run some 7.5 km in 35 minutes, over
+        # 200 m/min, where the hardest-working starter managed about 115. It
+        # does not look like her either: 126 Player Load per km against her
+        # usual 102. Most likely someone else's pod, so Sep 12 is unknown for
+        # her rather than her biggest day. Left in, it would have raised her
+        # load thresholds for weeks.
+        "player": "Priya Torres",
+        "start": "2026-09-12",
+        "end": "2026-09-12",
+        "reason": "capture does not match the 35 minutes she played vs CSUSM",
+    },
 ]
 
 
