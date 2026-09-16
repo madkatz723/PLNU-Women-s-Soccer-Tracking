@@ -1333,6 +1333,21 @@ with tab_fatigue:
                 "Clear the entry in `fatigue.EXCLUDED_CAPTURES` once the capture is good again."
             )
 
+        # A dropped jump is as much a blind spot as a dropped capture, and the
+        # tab says so for the same reason: a silently missing test leaves the
+        # board looking complete when it is not.
+        if fatigue.EXCLUDED_CMJ_TESTS:
+            notes = ", ".join(
+                f"**{rule['player']}** on "
+                f"{pd.to_datetime(rule['start']):%b %d} ({rule['reason']})"
+                for rule in fatigue.EXCLUDED_CMJ_TESTS
+            )
+            st.warning(
+                f"CMJ ignored for {notes}. Those tests are out of the scoring and out of "
+                "the season each player is compared against. Clear the entry in "
+                "`fatigue.EXCLUDED_CMJ_TESTS` if a test should count after all."
+            )
+
         # A partial capture can flag but not clear, so the rows it touches read
         # differently for a week. Say why, and when it stops.
         partial_rows = board[board.get("GPS Partial", pd.Series(False, index=board.index)).eq(True)]

@@ -99,13 +99,15 @@ EXCLUDED_CAPTURES = [
         "reason": "pod left running during travel to CPP",
     },
     {
-        # Did not play against LA. Her pod shows a 745 m walk-through while the
-        # others warmed up, never faster than 3.25 m/s, then 4 m over the last
-        # 2.4 hours -- not a session, so not scored as one.
+        # Injured. It began as the LA match she did not play: a 745 m
+        # walk-through while the others warmed up, then 4 m over the last 2.4
+        # hours. She has not worn a pod since, and without an end date her row
+        # would otherwise be scored on the Sep 9 window and read "Clear" for as
+        # long as she is out -- the failure mode this list exists to prevent.
         "player": "Kaleia Coughlin",
         "start": "2026-09-10",
-        "end": "2026-09-10",
-        "reason": "did not play vs LA",
+        "end": None,
+        "reason": "out injured",
     },
     {
         # Coaches report 35 minutes against CSUSM, but the pod assigned to her
@@ -167,6 +169,40 @@ PLAYER_NOTES = [
         "start": "2026-08-24",
         "end": None,
         "note": "Returning to play \u2014 rising load is a planned ramp",
+    },
+    {
+        # Her Sep 15 jump was taken straight after a hard workout rather than
+        # before training, so it is a real number measured under conditions her
+        # own baseline was not. It clears the noise floor by 0.01 cm. Not
+        # excluded -- an acutely fatigued jump is still a jump -- but a coach
+        # reading the flag has to know it came after the session. Remove this
+        # once she has a clean test.
+        "player": "Leah Uezato",
+        "start": "2026-09-15",
+        "end": None,
+        "note": "Sep 15 jump taken straight after a workout",
+    },
+]
+
+
+# CMJ tests to leave out of the scoring, the jump-side counterpart of
+# EXCLUDED_CAPTURES. Same shape, and matched the same way.
+#
+# A jump is excluded when the test itself should not have counted, not when the
+# number is merely low or surprising: a low jump is the signal this tab exists
+# to catch, so the bar for removing one is that it does not describe the
+# player's readiness at all. Conditions that make a real jump hard to read
+# belong in PLAYER_NOTES instead.
+EXCLUDED_CMJ_TESTS = [
+    {
+        # Recorded on a day she had a class conflict and could not train, per
+        # staff. It was also her first and only jump of the season, so leaving
+        # it in would give her a one-test baseline built from a test that
+        # should not have been taken.
+        "player": "Emma Blakely",
+        "start": "2026-09-15",
+        "end": "2026-09-15",
+        "reason": "class conflict, could not train",
     },
 ]
 
@@ -419,11 +455,18 @@ def cmj_state(cmj_df, percentile=PERCENTILE):
 
     df = cmj_df.dropna(subset=["Average", "Date"]).copy()
     df["Player Name"] = roster.canonicalize(df["Player Name"].astype(str).str.strip())
+    df["Date"] = pd.to_datetime(df["Date"])
+    # Dropped before anything is measured, so an excluded test reaches neither
+    # her latest reading nor the season it is compared against.
+    df = df[~_rule_mask(df, EXCLUDED_CMJ_TESTS)]
+    if df.empty:
+        return pd.DataFrame()
 
     # Measured across the whole sheet, not per player: one athlete's handful of
     # repeats is far too few to estimate her own noise, and the error belongs to
-    # the protocol rather than to her.
-    detectable = cmj_detectable_change(cmj_df)
+    # the protocol rather than to her. Taken after the exclusions, since a test
+    # that should not have counted should not set the bar the rest are held to.
+    detectable = cmj_detectable_change(df)
 
     rows = []
     for player, group in df.groupby("Player Name"):
