@@ -32,8 +32,26 @@ ROSTER_ORDER = list(roster.ROSTER)
 # Tuesday counts as much as a long Saturday.
 LOAD_METRICS = ["Player Load", "HI + Sprint Distance"]
 
+# Carried through prepare_gps purely so the GPS tab can report a session
+# against the same player's recent history. Nothing on the watchlist scores on
+# them -- they are context for the daily report, not fatigue evidence.
+CONTEXT_METRICS = ["Accel + Decel Efforts", "High Speed Distance"]
+
 WINDOW_DAYS = 7
 PERCENTILE = 0.75
+
+# Acute:chronic windows, in calendar days. The ratio is built from daily
+# averages (window sum / window length) rather than a mean over sessions, so a
+# week carrying five sessions and a week carrying two are not read as equal --
+# the same reason rolling_load() works in calendar days.
+ACUTE_DAYS = 7
+CHRONIC_DAYS = 28
+
+# Prior sessions of the same type needed before "her typical match" means
+# anything. Below this the honest answer is that there is no baseline yet: the
+# first match of the season has nothing to be typical against, and one prior
+# match is a sample of one.
+MIN_CONTEXT_SESSIONS = 2
 
 # A player needs a few prior windows before "her own 75th percentile" means
 # anything. Below this we report insufficient history rather than flagging or
@@ -384,7 +402,7 @@ def prepare_gps(frames):
     df["Player Name"] = roster.canonicalize(df["Raw Name"])
 
     for col in ("Player Load", "HI Distance", "Sprint Distance", "Distance",
-                "Max Velocity"):
+                "Max Velocity", *CONTEXT_METRICS):
         if col not in df.columns:
             df[col] = np.nan
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -394,6 +412,8 @@ def prepare_gps(frames):
     # but sum rather than assume that holds for a future multi-period export.
     agg = {metric: "sum" for metric in LOAD_METRICS}
     agg["Distance"] = "sum"
+    for metric in CONTEXT_METRICS:
+        agg[metric] = "sum"
     agg["Is Match"] = "max"
     # Carried through so a capture can be sanity-checked after the fact; a peak
     # speed is a property of the day, not something to add up.
@@ -452,6 +472,128 @@ def rolling_load(daily, window_days=WINDOW_DAYS):
             in_window = dates[: pos + 1] >= cutoff
             out.at[row_idx, "Window Partial"] = bool(partial[: pos + 1][in_window].any())
     return out
+
+
+def session_context(daily, as_of, is_match=None):
+    """Per-player history as of one session date, for the GPS tab's daily
+    report: acute:chronic load, each context metric's recent typical level,
+    and season-best speed.
+
+    `daily` is a prepare_gps() frame -- already name-resolved, already stripped
+    of the captures in EXCLUDED_CAPTURES, so a dead pod cannot quietly drag a
+    player's typical week down. `as_of` anchors everything to the session being
+    viewed rather than to today, so scrolling back through the library shows
+    what was known on the day.
+
+    `is_match` restricts the typical levels to sessions of the same kind. A
+    match compared against a baseline that is four-fifths practices reads as a
+    huge overload every time, which is an artefact of the comparison rather
+    than anything the player did. Pass None to compare against every session.
+
+    Every column can come back NaN. A player with no session in the acute
+    window has no ratio, and a season younger than CHRONIC_DAYS has no settled
+    chronic load -- `Chronic Complete` says which, so the caller can report
+    "not enough history yet" instead of printing a confident number built from
+    a fortnight.
+    """
+    metrics = ["Distance", *CONTEXT_METRICS]
+    columns = (["Player Name", "Acute Load", "Chronic Load", "ACWR",
+                "Chronic Complete"]
+               + [f"{m} Typical" for m in metrics]
+               + ["Typical Sessions", "Season Max Velocity"])
+    if daily is None or daily.empty:
+        return pd.DataFrame(columns=columns)
+
+    as_of = pd.to_datetime(as_of)
+    if pd.isna(as_of):
+        return pd.DataFrame(columns=columns)
+
+    history = daily[daily["Date"] <= as_of]
+    if history.empty:
+        return pd.DataFrame(columns=columns)
+
+    acute_start = as_of - pd.Timedelta(days=ACUTE_DAYS - 1)
+    chronic_start = as_of - pd.Timedelta(days=CHRONIC_DAYS - 1)
+
+    rows = []
+    for player, group in history.groupby("Player Name"):
+        acute_window = group[group["Date"] >= acute_start]
+        chronic_window = group[group["Date"] >= chronic_start]
+
+        # Sums over calendar windows, divided by the window length rather than
+        # by the number of sessions in it: a rest day is a real part of the
+        # week and should pull the average down.
+        #
+        # Early in the season the window runs off the front of the data, and
+        # dividing by its nominal length there is not conservative, it is
+        # wrong: on Aug 22, two days into tracking, a 2-day total over 7 and
+        # the same total over 28 gave every player on the squad an ACWR of
+        # exactly 4.00 -- an artefact of the divisors, identical for everyone,
+        # and alarming enough to act on. Both windows are divided by the days
+        # actually observed instead, so the ratio compares like with like from
+        # the first week.
+        first_seen = group["Date"].min()
+        observed = (as_of - first_seen).days + 1
+        acute_days = min(ACUTE_DAYS, observed)
+        chronic_days = min(CHRONIC_DAYS, observed)
+
+        acute = acute_window["Player Load"].sum() / acute_days
+        chronic = chronic_window["Player Load"].sum() / chronic_days
+        if not len(acute_window) or not chronic:
+            acute = chronic = ratio = np.nan
+        elif observed <= ACUTE_DAYS:
+            # Both windows still cover the same days, so the ratio is 1.00 by
+            # construction -- on the season's opening session it printed a
+            # tidy 1.00 beside every name, which reads as a squad in perfect
+            # balance rather than as a week that has not happened yet. There
+            # is no ratio until there is a chronic period to be acute against.
+            ratio = np.nan
+        else:
+            ratio = acute / chronic
+
+        # The chronic load is only a settled reference once the player has
+        # been tracked for the whole window. Before that it is a short-season
+        # average wearing a 28-day label, and the caller should say so.
+        chronic_complete = bool(observed >= CHRONIC_DAYS)
+
+        # Strictly before `as_of`: a session must not help set the baseline it
+        # is being judged against.
+        prior = group[(group["Date"] >= chronic_start) & (group["Date"] < as_of)]
+        if is_match is not None and "Is Match" in prior.columns:
+            prior = prior[prior["Is Match"].astype(bool) == bool(is_match)]
+
+        typical = {}
+        if len(prior) >= MIN_CONTEXT_SESSIONS:
+            for metric in metrics:
+                values = pd.to_numeric(prior.get(metric), errors="coerce")
+                typical[f"{metric} Typical"] = (values.mean() if values is not None
+                                                and values.notna().any() else np.nan)
+        else:
+            for metric in metrics:
+                typical[f"{metric} Typical"] = np.nan
+
+        # A season best is a maximum, so it is the one statistic a single junk
+        # capture owns outright: the Sep 5 travel rows read 34 m/s and would
+        # stand as two players' season highs for the rest of the year. Speeds
+        # past the running limit are dropped here rather than reported, the
+        # same line suspect_captures() flags for review.
+        velocity = pd.to_numeric(group.get("Max Velocity"), errors="coerce")
+        if velocity is not None:
+            velocity = velocity[velocity <= IMPLAUSIBLE_VELOCITY]
+
+        rows.append({
+            "Player Name": player,
+            "Acute Load": acute,
+            "Chronic Load": chronic,
+            "ACWR": ratio,
+            "Chronic Complete": chronic_complete,
+            **typical,
+            "Typical Sessions": int(len(prior)),
+            "Season Max Velocity": (velocity.max() if velocity is not None
+                                    and velocity.notna().any() else np.nan),
+        })
+
+    return pd.DataFrame(rows, columns=columns)
 
 
 def drop_excluded_trials(cmj_df):

@@ -18,7 +18,6 @@ reports straight off disk (see TESTING_PDF_DIR).
 
 import os
 import re
-import hashlib
 import base64
 from datetime import datetime
 import pandas as pd
@@ -672,50 +671,6 @@ def read_pdf_bytes(path, mtime):
         return fh.read()
 
 
-def _stable_seed(name, salt=0):
-    """Deterministic per-player seed (Python's built-in hash() is randomized
-    per process, so we use md5 to keep this stable across reruns/sessions)."""
-    digest = hashlib.md5(f"{name}-{salt}".encode()).hexdigest()
-    return int(digest, 16) % (2**32)
-
-
-def synthetic_rolling_history(player_name, current_value, salt, n_days=28):
-    """Builds a plausible 28-day trailing history ending in `current_value`,
-    seeded deterministically per player so results are stable across reruns.
-    Used to estimate acute:chronic load and rolling 'typical' baselines when
-    real multi-session history isn't available (single-day exports/uploads)."""
-    rng = np.random.default_rng(_stable_seed(player_name, salt))
-    if current_value is None or pd.isna(current_value) or current_value <= 0:
-        current_value = 1.0
-    baseline = current_value * rng.uniform(0.85, 1.05)
-    noise = rng.normal(0, baseline * 0.15, n_days - 1)
-    history = np.clip(baseline + noise, baseline * 0.4, baseline * 1.6)
-    return np.append(history, current_value)
-
-
-def acute_chronic_ratio(player_name, current_load, salt=1):
-    history = synthetic_rolling_history(player_name, current_load, salt=salt)
-    acute = history[-7:].mean()
-    chronic = history.mean()
-    ratio = acute / chronic if chronic else np.nan
-    return acute, chronic, ratio
-
-
-def synthetic_season_max(player_name, current_value, salt=2):
-    rng = np.random.default_rng(_stable_seed(player_name, salt))
-    if current_value is None or pd.isna(current_value):
-        return current_value
-    return round(current_value * rng.uniform(1.02, 1.15), 2)
-
-
-def typical_baseline(player_name, current_value, salt):
-    """Mean of a synthetic rolling history \u2014 used as the 'typical' per-player
-    reference value for narrative comparisons (e.g. 'distance was 15% above
-    typical')."""
-    history = synthetic_rolling_history(player_name, current_value, salt=salt)
-    return history.mean()
-
-
 CMJ_DERIVED_COLUMNS = [
     "Rolling Baseline", "Rolling SD", "Difference", "Z-Score",
     "% Change", "Readiness Score", "Consecutive Days",
@@ -814,13 +769,16 @@ FLAG_COLORS = {
 
 
 # ---------------------------------------------------------------------------
-# Fatigue watchlist (Tab 4)
+# Season history, shared by the GPS tab (Tab 2) and the fatigue watchlist
+# (Tab 4)
 # ---------------------------------------------------------------------------
 
 @st.cache_data
 def load_gps_season():
-    """Every GPS session in the library, stacked and dated. The GPS tab loads
-    one session at a time; a rolling load window needs the season at once."""
+    """Every GPS session in the library, stacked and dated. Both tabs that
+    need history read it from here: the GPS tab shows one session at a time
+    but reports it against the player's own recent weeks, and a rolling load
+    window needs the season at once either way."""
     frames = []
     for label in GPS_LIBRARY:
         paths = gps_session_paths(label)
@@ -1091,6 +1049,45 @@ with tab_gps:
             team = pd.DataFrame()
 
         # ---------------------------------------------------------------
+        # This session against the player's own recent weeks.
+        #
+        # The charts below describe one file; whether the numbers in it are
+        # heavy, light or ordinary is only answerable from the season, so the
+        # history comes from the same stacked frame the watchlist scores on --
+        # excluded captures already dropped, names already resolved. It is
+        # anchored to the session being viewed rather than to today, so
+        # scrolling back through the library shows what was known on the day.
+        #
+        # An uploaded file has no date the library can place, so there is no
+        # history to compare it against and the context is simply absent. That
+        # is the honest state: this used to be filled with a seeded random
+        # walk, which put a confident ACWR of about 1.0 on every player in the
+        # squad -- sd 0.04, never once crossing a threshold -- while the real
+        # spread that week ran 0.46 to 1.38.
+        # ---------------------------------------------------------------
+        session_is_match = None
+        if pd.notna(session_date):
+            label_key = gps_library_choice or ""
+            session_is_match = label_key.strip().lower().startswith("match")
+
+        season_daily = load_gps_season()
+        session_ctx = fatigue.session_context(
+            season_daily, session_date, is_match=session_is_match
+        ) if pd.notna(session_date) else pd.DataFrame()
+
+        has_context = not session_ctx.empty
+        if has_context:
+            # The season frame is name-resolved; this file is not. Join on the
+            # canonical name but keep the pod spelling on the axis, so a chart
+            # still looks like the export the staff uploaded.
+            team = team.copy()
+            team["_canon"] = roster.canonicalize(team["Player Name"])
+            team = team.merge(
+                session_ctx.rename(columns={"Player Name": "_canon"}),
+                on="_canon", how="left",
+            )
+
+        # ---------------------------------------------------------------
         # KPI row + narrative caption, mirroring the club's daily email format
         # ---------------------------------------------------------------
         with right2:
@@ -1105,26 +1102,46 @@ with tab_gps:
             k3.metric("HSD (team avg)", f"{avg_hsd:.1f} m" if avg_hsd else "\u2014")
             k4.metric("Accel/Decel Efforts (team avg)", f"{avg_accdec:.1f}" if avg_accdec else "\u2014")
 
-            if not team.empty and avg_distance and avg_accdec and avg_hsd:
-                typ_distance = team["Player Name"].apply(
-                    lambda p: typical_baseline(p, team.loc[team["Player Name"] == p, "Distance"].values[0], salt=10)
-                ).mean()
-                typ_accdec = team["Player Name"].apply(
-                    lambda p: typical_baseline(p, team.loc[team["Player Name"] == p, "Accel + Decel Efforts"].values[0], salt=11)
-                ).mean()
-                typ_hsd = team["Player Name"].apply(
-                    lambda p: typical_baseline(p, team.loc[team["Player Name"] == p, "High Speed Distance"].values[0], salt=12)
-                ).mean()
+            if has_context and not team.empty:
+                # Only players who have a typical to be compared against, and
+                # only those this file reported, so the percentage describes
+                # the same group on both sides of the comparison. A player
+                # with too little history drops out of the sentence rather
+                # than being averaged in at her raw value.
+                kind = "match" if session_is_match else "practice"
+                deltas = {}
+                for metric, short in (("Distance", "Distance"),
+                                      ("Accel + Decel Efforts", "Accel/Decel Efforts"),
+                                      ("High Speed Distance", "HSD")):
+                    typical_col = f"{metric} Typical"
+                    if metric not in team.columns or typical_col not in team.columns:
+                        continue
+                    pair = team[[metric, typical_col]].dropna()
+                    typical_total = pair[typical_col].sum()
+                    if len(pair) and typical_total:
+                        deltas[short] = (
+                            (pair[metric].sum() - typical_total) / typical_total * 100,
+                            len(pair),
+                        )
 
-                pct_distance = (avg_distance - typ_distance) / typ_distance * 100 if typ_distance else 0
-                pct_accdec = (avg_accdec - typ_accdec) / typ_accdec * 100 if typ_accdec else 0
-                pct_hsd = (avg_hsd - typ_hsd) / typ_hsd * 100 if typ_hsd else 0
-
+                if deltas:
+                    covered = min(n for _, n in deltas.values())
+                    phrases = [f"**{short} {pct:+.0f}%**" for short, (pct, _) in deltas.items()]
+                    st.caption(
+                        f"Against each player's own typical {kind} over the previous "
+                        f"{fatigue.CHRONIC_DAYS} days: " + ", ".join(phrases) + ". "
+                        f"({covered} of {len(team)} players have enough earlier "
+                        f"{kind} sessions to compare.)"
+                    )
+                else:
+                    st.caption(
+                        f"No {kind} session earlier than this one in the library yet, "
+                        "so there is nothing to compare it against."
+                    )
+            elif not team.empty:
                 st.caption(
-                    f"Distance and Accel/Decel Efforts were **{pct_distance:+.0f}%** and **{pct_accdec:+.0f}%** "
-                    f"relative to each player's typical rolling levels; HSD was **{pct_hsd:+.0f}%**. "
-                    "(Typical levels are estimated from synthetic rolling history \u2014 swap in real "
-                    "historical data for production use.)"
+                    "An uploaded session is shown on its own: comparing against a "
+                    "player's typical week needs a dated session from the library."
                 )
 
         st.markdown("---")
@@ -1187,13 +1204,19 @@ with tab_gps:
             st.markdown("<div class='section-label'>Load Management &amp; Speed</div>", unsafe_allow_html=True)
             r2c1, r2c2 = st.columns(2, gap="large")
             with r2c1:
-                if "Player Load" in team.columns:
-                    acwr_rows = []
-                    for _, row in team.iterrows():
-                        acute, chronic, ratio = acute_chronic_ratio(row["Player Name"], row["Player Load"], salt=1)
-                        acwr_rows.append({"Player Name": row["Player Name"], "Acute": acute, "Chronic": chronic, "ACWR": ratio})
-                    acwr_df = pd.DataFrame(acwr_rows).sort_values("Player Name")
+                acwr_df = pd.DataFrame()
+                if "Player Load" in team.columns and has_context and "ACWR" in team.columns:
+                    acwr_df = (team[["Player Name", "Acute Load", "Chronic Load", "ACWR"]]
+                               .dropna(subset=["ACWR"]).sort_values("Player Name"))
 
+                if "Player Load" not in team.columns or not has_context:
+                    st.info(
+                        "Acute:chronic load is built from the season, so it needs a "
+                        "dated library session rather than a one-off upload."
+                    )
+                elif acwr_df.empty:
+                    st.info("No player in this session has enough load history yet for a ratio.")
+                else:
                     fig_acwr = go.Figure()
                     fig_acwr.add_trace(go.Bar(
                         x=acwr_df["Player Name"], y=acwr_df["ACWR"], name="ACWR",
@@ -1201,11 +1224,11 @@ with tab_gps:
                         text=acwr_df["ACWR"].round(2), textposition="inside",
                     ))
                     fig_acwr.add_trace(go.Scatter(
-                        x=acwr_df["Player Name"], y=acwr_df["Chronic"], name="Chronic Load",
+                        x=acwr_df["Player Name"], y=acwr_df["Chronic Load"], name="Chronic Load",
                         mode="lines", line=dict(color=PLNU_GREEN_DARK, shape="hv", width=2), yaxis="y2",
                     ))
                     fig_acwr.add_trace(go.Scatter(
-                        x=acwr_df["Player Name"], y=acwr_df["Acute"], name="Acute Load",
+                        x=acwr_df["Player Name"], y=acwr_df["Acute Load"], name="Acute Load",
                         mode="lines", line=dict(color="#ff4b4b", shape="hv", width=2), yaxis="y2",
                     ))
                     fig_acwr.add_hrect(y0=0.8, y1=1.3, fillcolor="gray", opacity=0.25, line_width=0, yref="y1")
@@ -1215,36 +1238,67 @@ with tab_gps:
                         height=430,
                         title=f"Player Load Acute:Chronic Ratio - {session_label}",
                         yaxis=dict(title="Acute:Chronic Ratio"),
-                        yaxis2=dict(title="Player Load", overlaying="y", side="right"),
+                        yaxis2=dict(title="Player Load per day", overlaying="y", side="right"),
                         xaxis=dict(title="Player Name", tickangle=-40),
                         legend=dict(orientation="h", y=1.16),
                         margin=dict(t=90, b=10, l=10, r=10),
                     )
-                    chart_card(fig_acwr, caption="Estimated from synthetic 28-day history \u2014 replace with real historical data when available.")
+
+                    # Daily averages over calendar windows, so the two bars are
+                    # on the same footing whether a week held two sessions or
+                    # five. Until the squad has been tracked for a full chronic
+                    # window the denominator is the season so far, which makes
+                    # the ratio jumpier than it will be later -- worth saying
+                    # out loud rather than letting a coach read an early-season
+                    # 1.4 as the same thing as a March one.
+                    settled = bool(team["Chronic Complete"].fillna(False).any())
+                    note = (f"{fatigue.ACUTE_DAYS}-day vs {fatigue.CHRONIC_DAYS}-day "
+                            "average daily Player Load, excluding known bad captures.")
+                    if not settled:
+                        earliest = season_daily["Date"].min()
+                        tracked = (session_date - earliest).days + 1
+                        note += (f" Tracking is {tracked} day{'s' if tracked != 1 else ''} old, "
+                                 f"so the chronic side is still the season to date rather than "
+                                 f"a settled {fatigue.CHRONIC_DAYS}-day baseline.")
+                    chart_card(fig_acwr, caption=note)
             with r2c2:
                 if "Max Velocity" in team.columns:
                     mv_df = team.sort_values("Player Name").copy()
-                    mv_df["Season Max"] = mv_df.apply(
-                        lambda r: synthetic_season_max(r["Player Name"], r["Max Velocity"], salt=2), axis=1
-                    )
                     color_arg = "Position" if "Position" in mv_df.columns else None
                     fig_mv = px.bar(
                         mv_df, x="Player Name", y="Max Velocity", color=color_arg,
-                        title=f"Max Velocity (m/s) - {session_label} \u2014 {len(mv_df)} players",
+                        title=f"Max Velocity (m/s) - {session_label} — {len(mv_df)} players",
                         text_auto=".2f",
                     )
-                    fig_mv.add_trace(go.Scatter(
-                        x=mv_df["Player Name"], y=mv_df["Season Max"], mode="markers+text",
-                        text=mv_df["Season Max"].round(1).astype(str), textposition="top center",
-                        marker=dict(color=PLNU_GREEN_DARK, size=6), name="Season Max", showlegend=False,
-                    ))
+                    # Season best to date, including today, so a new personal
+                    # best sits level with the bar that set it instead of
+                    # floating above it. Speeds past the running limit are
+                    # already dropped upstream -- a pod left running in a car
+                    # reads about 34 m/s and would otherwise own this marker
+                    # for the rest of the season.
+                    if has_context and "Season Max Velocity" in mv_df.columns:
+                        marker = mv_df.dropna(subset=["Season Max Velocity"])
+                        if not marker.empty:
+                            fig_mv.add_trace(go.Scatter(
+                                x=marker["Player Name"], y=marker["Season Max Velocity"],
+                                mode="markers+text",
+                                text=marker["Season Max Velocity"].round(1).astype(str),
+                                textposition="top center",
+                                marker=dict(color=PLNU_GREEN_DARK, size=6),
+                                name="Season Max", showlegend=False,
+                            ))
                     fig_mv.update_layout(
                         height=430, xaxis_title="Player Name", yaxis_title="Max Velocity",
                         legend=dict(orientation="h", y=1.16),
                         margin=dict(t=90, b=10, l=10, r=10),
                     )
                     fig_mv.update_xaxes(tickangle=-40)
-                    chart_card(fig_mv)
+                    chart_card(
+                        fig_mv,
+                        caption=("Markers are each player's season best to date."
+                                 if has_context else
+                                 "Season bests need a dated library session."),
+                    )
             spacer()
 
             # --- Volume & Efforts ---
