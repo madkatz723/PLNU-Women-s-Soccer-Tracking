@@ -124,6 +124,19 @@ EXCLUDED_CAPTURES = [
         "end": "2026-09-12",
         "reason": "capture does not match the 35 minutes she played vs CSUSM",
     },
+    {
+        # Her pod ran 134 minutes against the group's 84 on Sep 16 and staff
+        # confirm she did no extra work that day, so the last 50 minutes are
+        # the pod failing to switch off. There is no period split to trim it
+        # back to the session, and the overshoot is not small -- it carries
+        # her first 152 m of high-speed running of the season. Left in, that
+        # would sit in her own reference distribution and lift the high-speed
+        # threshold she is later judged against, hiding a real spike.
+        "player": "Madilyn Audet",
+        "start": "2026-09-16",
+        "end": "2026-09-16",
+        "reason": "pod left running after the session",
+    },
 ]
 
 
@@ -193,6 +206,29 @@ PLAYER_NOTES = [
 # to catch, so the bar for removing one is that it does not describe the
 # player's readiness at all. Conditions that make a real jump hard to read
 # belong in PLAYER_NOTES instead.
+# Single trials to throw away, keeping the other one. A test records two
+# jumps and the pair is averaged, so one aborted attempt drags the average
+# down by half of however bad it was -- Madison Khan's 11.7 next to her 13.9
+# is the whole reason she reached the watchlist on Sep 16.
+#
+# This is deliberately narrower than EXCLUDED_CMJ_TESTS: the test happened and
+# the good trial still measures her, so throwing away both would discard a
+# real reading. `trial` is 1 or 2, matching the CMJ 1 / CMJ 2 columns. Only for
+# an attempt someone watched go wrong, never for the lower of two honest jumps
+# -- that spread is the measurement noise the floor is built from.
+EXCLUDED_CMJ_TRIALS = [
+    {
+        # She almost stepped off the mat and there was no time to repeat it,
+        # per staff. Her second trial stands on its own.
+        "player": "Madison Khan",
+        "start": "2026-09-16",
+        "end": "2026-09-16",
+        "trial": 1,
+        "reason": "aborted jump, no time to repeat",
+    },
+]
+
+
 EXCLUDED_CMJ_TESTS = [
     {
         # Recorded on a day she had a class conflict and could not train, per
@@ -416,6 +452,32 @@ def rolling_load(daily, window_days=WINDOW_DAYS):
             in_window = dates[: pos + 1] >= cutoff
             out.at[row_idx, "Window Partial"] = bool(partial[: pos + 1][in_window].any())
     return out
+
+
+def drop_excluded_trials(cmj_df):
+    """Blank the individual trials named in EXCLUDED_CMJ_TRIALS.
+
+    Applied to the raw sheet before Average and everything derived from it, so
+    the surviving trial becomes the test's reading, and the discarded pair no
+    longer counts as a repeat when the noise floor is measured -- an aborted
+    attempt is not evidence of how repeatable the protocol is.
+    """
+    if cmj_df is None or cmj_df.empty or not EXCLUDED_CMJ_TRIALS:
+        return cmj_df
+    if "Player Name" not in cmj_df.columns or "Date" not in cmj_df.columns:
+        return cmj_df
+
+    df = cmj_df.copy()
+    matched = df.assign(**{
+        "Player Name": roster.canonicalize(df["Player Name"].astype(str).str.strip()),
+        "Date": pd.to_datetime(df["Date"], errors="coerce"),
+    })
+    for rule in EXCLUDED_CMJ_TRIALS:
+        column = f"CMJ {rule['trial']}"
+        if column not in df.columns:
+            continue
+        df.loc[_rule_mask(matched, [rule]), column] = np.nan
+    return df
 
 
 def cmj_detectable_change(cmj_df, fallback=CMJ_NOISE_FALLBACK):

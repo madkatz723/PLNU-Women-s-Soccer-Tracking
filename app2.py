@@ -1287,6 +1287,9 @@ with tab_fatigue:
         os.path.join(SAMPLE_DIR, CMJ_LIBRARY["Season"]), CMJ_REQUIRED_COLUMNS
     ).copy()
     fatigue_cmj["Date"] = pd.to_datetime(fatigue_cmj["Date"], errors="coerce")
+    # Before the metrics, so a discarded trial never reaches the average it
+    # would otherwise drag down (see fatigue.EXCLUDED_CMJ_TRIALS).
+    fatigue_cmj = fatigue.drop_excluded_trials(fatigue_cmj)
     fatigue_cmj = derive_cmj_metrics(fatigue_cmj)
     fatigue_gps = load_gps_season()
     board = fatigue.build_board(fatigue_cmj, fatigue_gps)
