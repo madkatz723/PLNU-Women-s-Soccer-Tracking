@@ -1010,15 +1010,28 @@ with tab_gps:
                     "below; the Fatigue Watchlist excludes them too."
                 )
 
+        # One filter state per session. Streamlit keeps a keyed widget's value
+        # across reruns and ignores `default` once it has one, so a single key
+        # carried the first session's selection into every session opened after
+        # it, silently minus anyone that first session did not have. Opening
+        # the Sep 17 Biola match after the default Aug 21 practice left 5 of 17
+        # players out of the charts and the team averages above them. Keying on
+        # the session gives each one its own filter, starting with everyone.
+        if st.session_state.get("gps_source_mode") == "Library":
+            filter_scope = f"library:{gps_library_choice}"
+        else:
+            upload = st.session_state.get("gps_uploader")
+            filter_scope = f"upload:{getattr(upload, 'file_id', None) or getattr(upload, 'name', '')}"
+
         with left2:
             st.markdown("#### Filters")
             players2 = sorted(gps_df["Player Name"].dropna().unique().tolist()) if "Player Name" in gps_df.columns else []
             selected_players2 = st.multiselect(
-                "Players", players2, default=players2, key="gps_players"
+                "Players", players2, default=players2, key=f"gps_players::{filter_scope}"
             )
             periods = sorted(gps_df["Period Name"].dropna().unique().tolist()) if "Period Name" in gps_df.columns else []
             selected_periods = st.multiselect(
-                "Period", periods, default=periods, key="gps_periods"
+                "Period", periods, default=periods, key=f"gps_periods::{filter_scope}"
             )
 
         filtered2 = gps_df.copy()
