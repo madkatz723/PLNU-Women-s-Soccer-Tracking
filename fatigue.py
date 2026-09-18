@@ -278,11 +278,17 @@ IMPLAUSIBLE_VELOCITY = 12.0
 # row contradicts, never for one that is merely a surprise.
 SPEED_SPIKES = [
     {
-        # 8.80 m/s against a season best of 7.51 and a squad high of 7.84, in
-        # the same row as a 8.51 m/s^2 peak acceleration where every
-        # team-mate read 3.7-4.1, 1.8 m of sprint distance and no sprint
-        # efforts at all. Nobody reaches 31.7 km/h without covering sprint
-        # metres to get there. Her distance and load read normally and stand.
+        # 8.80 m/s against a season best of 7.51 and a squad high of 7.84,
+        # with 1.8 m of sprint distance and no sprint efforts. The sprint band
+        # in this export starts at or below 6.72 m/s -- Grace Nelson logged
+        # sprint metres with that top speed -- so reaching 8.80 means crossing
+        # it both ways. Even at 4 m/s^2, the hardest anyone accelerated that
+        # day, 6.7 -> 8.8 m/s and back covers about 8 m above the band. 1.8 m
+        # is 0.2 s: one or two samples at 10 Hz, the signature of a spike
+        # rather than a sprint. Her 8.51 m/s^2 peak acceleration is the same
+        # spike seen a second way, not separate evidence. Unconfirmed against
+        # the raw trace; if OpenField shows a real build-up, delete this entry.
+        # Her distance and load read normally and stand.
         "player": "Abby Wright",
         "start": "2026-09-17",
         "end": "2026-09-17",
