@@ -267,6 +267,30 @@ EXCLUDED_CMJ_TESTS = [
 IMPLAUSIBLE_VELOCITY = 12.0
 
 
+# Peak speeds to discard while keeping the rest of the capture. A single-sample
+# GPS spike leaves distance and Player Load untouched but sets a top speed the
+# player never ran, and a season best is a maximum -- one bad sample owns it
+# for the rest of the year (see session_context). IMPLAUSIBLE_VELOCITY only
+# catches the vehicle kind; a spike to a speed a person could run slips under
+# it, and has to be named here instead.
+#
+# Same shape as EXCLUDED_CAPTURES. Only for a peak something else in the same
+# row contradicts, never for one that is merely a surprise.
+SPEED_SPIKES = [
+    {
+        # 8.80 m/s against a season best of 7.51 and a squad high of 7.84, in
+        # the same row as a 8.51 m/s^2 peak acceleration where every
+        # team-mate read 3.7-4.1, 1.8 m of sprint distance and no sprint
+        # efforts at all. Nobody reaches 31.7 km/h without covering sprint
+        # metres to get there. Her distance and load read normally and stand.
+        "player": "Abby Wright",
+        "start": "2026-09-17",
+        "end": "2026-09-17",
+        "reason": "single-sample GPS spike vs Biola",
+    },
+]
+
+
 def suspect_captures(daily, limit=IMPLAUSIBLE_VELOCITY):
     """Player-days whose peak speed is too high to have come from running.
 
@@ -423,6 +447,9 @@ def prepare_gps(frames):
     # Drop known-bad captures before any aggregation, so they reach neither a
     # player's current window nor the distribution it is compared against.
     df = df[~_rule_mask(df, EXCLUDED_CAPTURES)]
+    # A spiked top speed is blanked rather than the row dropped: the load in
+    # the row is real, only the peak is not (see SPEED_SPIKES).
+    df.loc[_rule_mask(df, SPEED_SPIKES), "Max Velocity"] = np.nan
     df = df.assign(Partial=_rule_mask(df, PARTIAL_CAPTURES))
 
     daily = df.groupby(["Player Name", "Date"], as_index=False).agg(agg)
