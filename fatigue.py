@@ -201,18 +201,6 @@ PLAYER_NOTES = [
         "end": None,
         "note": "Returning to play \u2014 rising load is a planned ramp",
     },
-    {
-        # Her Sep 15 jump was taken straight after a hard workout rather than
-        # before training, so it is a real number measured under conditions her
-        # own baseline was not. It clears the noise floor by 0.01 cm. Not
-        # excluded -- an acutely fatigued jump is still a jump -- but a coach
-        # reading the flag has to know it came after the session. Remove this
-        # once she has a clean test.
-        "player": "Leah Uezato",
-        "start": "2026-09-15",
-        "end": None,
-        "note": "Sep 15 jump taken straight after a workout",
-    },
 ]
 
 
