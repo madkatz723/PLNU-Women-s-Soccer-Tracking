@@ -895,7 +895,8 @@ def build_board(cmj_df, daily_gps):
     ).reset_index(drop=True)
 
 
-def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
+def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load",
+                     min_coverage=0.5):
     """Squad-median rolling load per session date, over complete windows only.
 
     While the squad is ramping, almost everyone sits near a season high by
@@ -904,23 +905,69 @@ def squad_load_trend(daily, window_days=WINDOW_DAYS, metric="Player Load"):
     data keeps the tab's caveat honest instead of freezing whatever was true
     the day it was written.
 
+    Every player's window is taken on every session date, not only on the
+    dates she wore a pod. Taking it only on her own dates made the median a
+    median of whoever was captured that day, so it moved with the squad list
+    rather than the load: on Sep 19 it fell from 3,320 to 2,860 and flipped the
+    phase to deload, while the 14 players in both medians had risen to 3,358 --
+    Saturday's median had simply added seven who barely played.
+
+    A player counts on a date when her window is complete and she was captured
+    at least half the squad's sessions in it. A week with one capture out of
+    six is mostly missing data -- the dead-pod problem again -- and the squad
+    splits into starters near 3,000-4,500 and non-starters near 1,300-2,400,
+    so one such week entering the pool can carry the median across the gap:
+    Priya Torres' lone Sep 15 capture moved it from 2,732 to 2,385 overnight
+    with nobody's load changing. Someone out of the exports all week (injured,
+    excluded, or simply unrecorded) is left out rather than counted as an
+    empty week.
+
     Partial windows are left out, and so is any date where they are most of
-    the squad: the partial Sep 10 capture alone would otherwise have read as load
-    falling from 38% to 52% off peak, when all that fell was the recording.
-    The trend then ends at the last date it can speak for.
+    the squad: the partial Sep 10 capture alone would otherwise have read as
+    load falling from 38% to 52% off peak, when all that fell was the
+    recording. The trend then ends at the last date it can speak for.
     """
     if daily.empty:
         return pd.Series(dtype=float)
-    rolled = rolling_load(daily, window_days)
-    rolled = rolled[rolled["Window Complete"]]
-    if rolled.empty:
+
+    span = np.timedelta64(window_days - 1, "D")
+    session_dates = np.sort(daily["Date"].unique())
+    partial_days = (daily["Partial"].eq(True) if "Partial" in daily.columns
+                    else pd.Series(False, index=daily.index))
+
+    rows = []
+    for player, idx in daily.groupby("Player Name").groups.items():
+        dates = daily.loc[idx, "Date"].to_numpy()
+        values = daily.loc[idx, metric].to_numpy(dtype=float)
+        partial = partial_days.loc[idx].to_numpy(dtype=bool)
+        first_seen = dates.min()
+        for as_of in session_dates:
+            # Same completeness rule as rolling_load(): a window that starts
+            # before her first capture is small for a structural reason.
+            if as_of - first_seen < span:
+                continue
+            in_window = (dates >= as_of - span) & (dates <= as_of)
+            squad_sessions = ((session_dates >= as_of - span)
+                              & (session_dates <= as_of)).sum()
+            if not in_window.any() or in_window.sum() < min_coverage * squad_sessions:
+                continue
+            window = values[in_window]
+            window = window[~np.isnan(window)]
+            rows.append({
+                "Date": as_of,
+                "Load": window.sum() if len(window) else np.nan,
+                "Window Partial": bool(partial[in_window].any()),
+            })
+
+    if not rows:
         return pd.Series(dtype=float)
-    recorded_share = (~rolled["Window Partial"]).groupby(rolled["Date"]).mean()
+    windows = pd.DataFrame(rows)
+    recorded_share = (~windows["Window Partial"]).groupby(windows["Date"]).mean()
     usable_dates = recorded_share.index[recorded_share >= 0.5]
-    rolled = rolled[~rolled["Window Partial"] & rolled["Date"].isin(usable_dates)]
-    if rolled.empty:
+    windows = windows[~windows["Window Partial"] & windows["Date"].isin(usable_dates)]
+    if windows.empty:
         return pd.Series(dtype=float)
-    return rolled.groupby("Date")[f"{metric} ({window_days}d)"].median().sort_index()
+    return windows.groupby("Date")["Load"].median().sort_index()
 
 
 def load_phase(daily, window_days=WINDOW_DAYS, lookback=3, threshold=0.05,

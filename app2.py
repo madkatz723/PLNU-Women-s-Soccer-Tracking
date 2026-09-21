@@ -1584,48 +1584,77 @@ with tab_fatigue:
                 f" Figures run to {trend.index[-1]:%b %d}; the windows since then are "
                 "missing part of a session."
             )
-        if phase == "ramping":
-            st.info(
-                "**Squad load is still ramping.** Median 7-day Player Load has climbed from "
-                f"{trend.iloc[0]:,.0f} to {trend.iloc[-1]:,.0f} across the season so far, so "
-                "most players sit near a season high by construction and the load half of the "
-                "test flags widely. The CMJ half is doing the real discriminating work until "
-                f"volume plateaus.{stale_note}"
-            )
-        elif phase == "deload":
-            # "Almost nobody can clear their threshold" is a prediction, and the
-            # board can check it. After the Sep 10-12 double-header ten players
-            # were over their own load while the squad median still sat 27% off
-            # peak, and a caption calling that a short watchlist would have
-            # talked a coach out of ten real flags.
-            load_scored = board["Status"].isin(
-                ["Watchlist", "Load only", "CMJ only", "Clear", "Load understated"]
-            ).sum()
-            load_flagged = board["Status"].isin(["Watchlist", "Load only"]).sum()
-            level = (
-                "**Squad load is well below its peak.** Median 7-day Player Load peaked at "
-                f"{trend.max():,.0f} and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off "
-                "peak)."
-            )
-            if load_flagged <= max(1, round(0.2 * load_scored)):
-                st.info(
-                    f"{level} Almost nobody can clear their own 75th percentile on a week this "
-                    "light, so a short watchlist reflects the lighter week rather than a squad "
-                    "that has recovered \u2014 read the CMJ column on its own until load builds "
-                    f"back.{stale_note}"
+        # Every phase makes a claim about how widely the load half is
+        # flagging, and the board can check it. The deload wording once told a
+        # coach a short watchlist reflected a light week while ten players were
+        # over their own load; the steady wording called both halves
+        # "discriminating normally" on Sep 18 with fifteen of 21 flagged. So the
+        # count leads, and the phase only supplies context around it.
+        load_scored = int(board["Status"].isin(
+            ["Watchlist", "Load only", "CMJ only", "Clear", "Load understated"]
+        ).sum())
+        load_flagged = int(board["Status"].isin(["Watchlist", "Load only"]).sum())
+        few_flagged = load_flagged <= max(1, round(0.2 * load_scored))
+        most_flagged = load_flagged > 0.5 * load_scored
+        count = (
+            f"**{load_flagged} of {load_scored}** players are over their own load threshold"
+        )
+
+        if phase is not None and len(trend):
+            if phase == "ramping":
+                level = (
+                    "**Squad load is still ramping.** Median 7-day Player Load has climbed "
+                    f"from {trend.iloc[0]:,.0f} to {trend.iloc[-1]:,.0f} this season."
+                )
+            elif phase == "deload":
+                level = (
+                    "**Squad load is well below its peak.** Median 7-day Player Load is "
+                    f"{trend.iloc[-1]:,.0f}, {abs(off_peak):.0f}% under its "
+                    f"{trend.max():,.0f} peak."
                 )
             else:
-                st.info(
-                    f"{level} The median does not describe everyone, though: **{load_flagged} of "
-                    f"{load_scored}** players are over their own 75th percentile, so treat their "
-                    f"load flags as real rather than discounting them for a light week.{stale_note}"
+                level = (
+                    "**Squad load is steady.** Median 7-day Player Load is "
+                    f"{trend.iloc[-1]:,.0f}, {abs(off_peak):.0f}% under its "
+                    f"{trend.max():,.0f} peak."
                 )
-        elif phase == "steady":
-            st.caption(
-                f"Squad load is steady \u2014 median 7-day Player Load peaked at {trend.max():,.0f} "
-                f"and now sits at {trend.iloc[-1]:,.0f} ({off_peak:+.0f}% off peak), so both "
-                f"halves of the test are discriminating normally.{stale_note}"
-            )
+
+            if most_flagged:
+                reading = (
+                    f"{count}, so the load half is describing the squad as a whole this "
+                    "week rather than singling anyone out. Those flags are real, but the "
+                    "players to act on first are the ones on the watchlist, where a jump "
+                    "drop backs the load up."
+                )
+                if phase == "deload":
+                    reading += " The squad median is under its peak, but it does not describe them."
+                elif phase == "ramping":
+                    reading += " That is expected while volume is still climbing."
+            elif few_flagged and phase == "deload":
+                reading = (
+                    f"{count}. On a week this light almost nobody can be, so a short "
+                    "watchlist reflects the lighter week rather than a squad that has "
+                    "recovered — read the CMJ column on its own until load builds back."
+                )
+            elif phase == "deload":
+                reading = (
+                    f"{count}. The squad median is under its peak, but it does not describe "
+                    "them — treat their load flags as real."
+                )
+            elif phase == "ramping":
+                reading = (
+                    f"{count}. While volume is climbing the load half flags more widely than "
+                    "usual, so the CMJ half is doing most of the discriminating."
+                )
+            else:
+                reading = f"{count}, so both halves are picking out individuals normally."
+
+            message = f"{level} {reading}{stale_note}"
+            # A normal week does not need to compete with the warnings above it.
+            if phase == "steady" and not most_flagged:
+                st.caption(message)
+            else:
+                st.info(message)
 
 
 # ===========================================================================
