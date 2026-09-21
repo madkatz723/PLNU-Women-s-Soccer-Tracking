@@ -134,9 +134,11 @@ EXCLUDED_CAPTURES = [
         # that day, so she would have run some 7.5 km in 35 minutes, over
         # 200 m/min, where the hardest-working starter managed about 115. It
         # does not look like her either: 126 Player Load per km against her
-        # usual 102. Most likely someone else's pod, so Sep 12 is unknown for
-        # her rather than her biggest day. Left in, it would have raised her
-        # load thresholds for weeks.
+        # usual 102 (104 on Sep 19). Staff confirm no pods were swapped, so the
+        # cause is unknown -- either the minutes or the capture is wrong -- and
+        # Sep 12 stays unknown for her rather than her biggest day. Left in, it
+        # would have raised her load thresholds for weeks. If the box score
+        # shows she played far more than 35 minutes, delete this entry.
         "player": "Priya Torres",
         "start": "2026-09-12",
         "end": "2026-09-12",
@@ -154,6 +156,37 @@ EXCLUDED_CAPTURES = [
         "start": "2026-09-16",
         "end": "2026-09-16",
         "reason": "pod left running after the session",
+    },
+    {
+        # The same fault as Audet's, confirmed for any capture grossly out of
+        # line with its group. On the Sep 14 recovery session hers ran 133
+        # minutes against everyone else's 49, and read 2.9 km and 363 Player
+        # Load against a group median of 2.0 km and 255 -- the group maximum
+        # on distance, from the one pod that stayed on 84 minutes longer.
+        "player": "Gianna Masinter",
+        "start": "2026-09-14",
+        "end": "2026-09-14",
+        "reason": "pod left running after the session",
+    },
+    {
+        # Sep 15: 165 minutes against a group of 112, and 8.6 km and 874
+        # Player Load against a group median of 5.2 km and 568 -- her season
+        # high by 16%, which is what an overrun does to a maximum. The extra
+        # 53 minutes carried about 3.4 km at walking pace, not training.
+        "player": "Shaylen Greff",
+        "start": "2026-09-15",
+        "end": "2026-09-15",
+        "reason": "pod left running after the session",
+    },
+    {
+        # Ankle injury, sitting out since the Sep 14 session. That day's
+        # capture is real and stays; nothing after it exists. Without this
+        # she was still read as "Load only" on her Sep 14 window, five days
+        # stale, which flags an injured player for training she is not doing.
+        "player": "Lehua Hanawahine",
+        "start": "2026-09-15",
+        "end": None,
+        "reason": "out injured, ankle",
     },
 ]
 
